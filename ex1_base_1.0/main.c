@@ -11,26 +11,24 @@
 #include <stdlib.h>
 #include <time.h>
 #include <semaphore.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 #include "fs.h"
 #include "lib/hash.h"
 
 #define MAX_COMMANDS 10
 #define MAX_INPUT_SIZE 100
 
-long numberThreads = 0;
 long numberBuckets = 0;
+int tidTableSize = 0;
 int done = 0; 
 pthread_t* tid;
 struct timeval begin, end;
-char inputCommands[MAX_COMMANDS][MAX_INPUT_SIZE];
 tecnicofs* fs;
-int prodptr = 0;
-int consptr = 0;
 pthread_mutex_t mutexInumberArrayLock;
 pthread_mutex_t mutexDoneLock;
 pthread_rwlock_t rwDoneLock;
-sem_t prod;
-sem_t cons;
+char *socketName;
 
 static void displayUsage (const char* appName){
     printf("Usage: %s\n", appName);
@@ -42,8 +40,8 @@ static void parseArgs (long argc, char* const argv[]){
         fprintf(stderr, "Invalid format:\n");
         displayUsage(argv[0]);
     }
-    numberBuckets = strtol(argv[4], NULL, 10);
-    numberThreads = strtol(argv[3], NULL, 10);
+    numberBuckets = strtol(argv[3], NULL, 10);
+    strcpy(socketName, argv[1]);
 
 }
 
@@ -275,79 +273,69 @@ void Threads(FILE *fin){
     gettimeofday(&end, NULL);
 }
 
+void criaThread(int cli){
+    int fileDescTable[5];
+    tid = (pthread_t *) realloc(tid, sizeof(pthread_t)*(++tidTableSize));
+
+    if(pthread_create(&tid[tidTableSize - 1], 0, NULL /*funcao para tratar do cliente*/, (void *) cli) != 0){
+        exit(EXIT_FAILURE);
+    }
+}
+
+
 
 int main(int argc, char* argv[]) {
-    FILE *fin, *fout;
     time_t t;
+    struct sockaddr_un server_addr;
+    int sockfd;
+    int cli;
+    struct sockaddr_un server_addr;
+
 
     /* gera uma seed baseada no tempo
     do sistema para usar na funcao rand() */
     srand((unsigned) time(&t));
     
     parseArgs(argc, argv);
-    tid = (pthread_t*) malloc(sizeof(pthread_t)*(numberThreads + 1));
-
-    if ((fin = fopen(argv[1], "r")) == NULL){
-        exit(EXIT_FAILURE);
-    }
-    if((fout = fopen(argv[2], "w")) == NULL){
-        exit(EXIT_FAILURE);
-    }
 
     fs = new_tecnicofs(numberBuckets);
-    if(sem_init(&prod, 0, (int) MAX_COMMANDS) == -1){
-        exit(EXIT_FAILURE);
-    }
-    if(sem_init(&cons, 0, 0) == -1){
-        exit(EXIT_FAILURE);
-    }
-    if(pthread_mutex_init(&mutexInumberArrayLock, NULL) != 0){
+
+    if((sockfd = socket(AF_UNIX, SOCK_STREAM, 0)) == -1){
+        fprintf(stderr, "Error: Failed to create the socket. \n");
         exit(EXIT_FAILURE);
     }
 
-    #ifdef MUTEX
-        if(pthread_mutex_init(&mutexDoneLock, NULL) != 0){
-            exit(EXIT_FAILURE);
-        }
-    #elif RWLOCK
-        if(pthread_rwlock_init(&rwDoneLock, NULL) != 0){
-            exit(EXIT_FAILURE);
-        }
-    #endif
+    unlink(socketName);
+    memset(&server_addr, 0, sizeof(server_addr));
 
-    Threads(fin);
+    server_addr.sun_family = AF_UNIX; 
+    strncpy(server_addr.sun_path, socketName, sizeof(server_addr.sun_path) - 1);
+
+    if((bind(sockfd, (const struct sockaddr*) &server_addr, sizeof(server_addr))) == -1){
+        fprintf(stderr, "Error: Failed to bind the socket. \n");
+        exit(EXIT_FAILURE);
+    }
+
+    if((listen(sockfd, 10)) == -1){
+        fprintf(stderr, "Error: Failed to listen to socket. \n");
+        exit(EXIT_FAILURE);
+    }
+
+    gettimeofday(&begin, NULL);
+
+    char buf[14];
+    while(1) {
+        cli = accept(sockfd, NULL, NULL);
+        /* chamar funcao para criar thread e criar tabela de
+        ficheiros abertos com descriptor do cliente */
+        read(cli, buf, 14);
+        puts(buf);
+    }
 
     printf("TecnicoFS completed in %0.4f seconds.\n", (end.tv_sec + (end.tv_usec / 1000000.0)) - (begin.tv_sec + (begin.tv_usec / 1000000.0)));
     print_tecnicofs_trees(fout, fs);
     
-    if(fclose(fin) == EOF){
-        exit(EXIT_FAILURE);
-    }
-    if(fclose(fout) == EOF){
-        exit(EXIT_FAILURE);
-    }
-
-    #ifdef MUTEX
-        if(pthread_mutex_destroy(&mutexDoneLock) != 0){
-            exit(EXIT_FAILURE);
-        }
-    #elif RWLOCK
-        if(pthread_rwlock_destroy(&rwDoneLock) != 0){
-            exit(EXIT_FAILURE);
-        }
-    #endif
-
-    if(pthread_mutex_destroy(&mutexInumberArrayLock) != 0){
-        exit(EXIT_FAILURE);
-    }
-    if(sem_destroy(&prod) == -1){
-        exit(EXIT_FAILURE);
-    }
-    if(sem_destroy(&cons) == -1){
-        exit(EXIT_FAILURE);
-    }
 
     free_tecnicofs(fs);
-    free(tid);
     exit(EXIT_SUCCESS);
 }
