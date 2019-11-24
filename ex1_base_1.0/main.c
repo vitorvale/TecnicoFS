@@ -233,7 +233,6 @@ void criaThread(int cli){
 
 void rotinaTratamentoSignal(){
     signalActivated++;
-    signal(SIGINT, rotinaTratamentoSignal);
 }
 
 int main(int argc, char* argv[]) {
@@ -243,6 +242,7 @@ int main(int argc, char* argv[]) {
     struct ucred ucred;
     sigset_t signal_mask;
     FILE *fout;
+    struct sigaction terminateAction;
 
 
     /* gera uma seed baseada no tempo
@@ -288,19 +288,26 @@ int main(int argc, char* argv[]) {
 
     sigemptyset (&signal_mask);
     sigaddset(&signal_mask, SIGINT);
-    if(pthread_sigmask(SIG_BLOCK, &signal_mask, NULL) != 0){
-        fprintf(stderr, "Error: Failed to execute function pthread_sigmask. \n");
-        exit(EXIT_FAILURE);
-    }
-    signal(SIGINT, rotinaTratamentoSignal);
+
+    terminateAction.sa_mask = signal_mask;
+    terminateAction.sa_flags = 0;
+    terminateAction.sa_handler = rotinaTratamentoSignal;
+
+    sigaction(SIGINT, &terminateAction, NULL);
+
     gettimeofday(&begin, NULL);
 
     while(signalActivated == 0) {
         int sessionAlreadyExistsFlag = 0;
         cli = accept(sockfd, NULL, NULL);
         if (cli == -1){
-            fprintf(stderr, "Error: Failed to accept connection. \n");
-            exit(EXIT_FAILURE);
+            if (signalActivated == 0){
+                fprintf(stderr, "Error: Failed to accept connection. \n");
+                exit(EXIT_FAILURE);
+            }
+            else{
+                continue;
+            }
         }
         ulen = sizeof(struct ucred);
         if (getsockopt(cli, SOL_SOCKET, SO_PEERCRED, &ucred, (socklen_t *) &ulen) == -1){
