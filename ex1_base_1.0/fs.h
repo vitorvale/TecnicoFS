@@ -3,6 +3,7 @@
 #include "lib/bst.h"
 #include <pthread.h>
 #include <unistd.h>
+#include "lib/inodes.h"
 
 /* estrutura auxiliar */
 typedef struct bst{

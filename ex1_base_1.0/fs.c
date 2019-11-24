@@ -30,6 +30,7 @@ tecnicofs* new_tecnicofs(int numberBuckets){
 
     fs->nextInumber = 0;
     fs->numBst = numberBuckets;
+    inode_table_init(); 
     fs->hashtable = (bstLink) malloc(sizeof(Bst)*numberBuckets);
 
     for (i = 0; i < fs->numBst; i++){
@@ -68,6 +69,7 @@ void free_tecnicofs(tecnicofs* fs){
         free(fs->hashtable[i]);
     }
     free(fs->hashtable);
+    inode_table_destroy();
 	free(fs);
 }
 
