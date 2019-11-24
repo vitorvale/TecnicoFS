@@ -21,7 +21,6 @@
 #include "lib/hash.h"
 #include "tecnicofs-api-constants.h"
 
-//#define _POSIX_SOURCE
 #define MAX_COMMANDS 10
 #define MAX_INPUT_SIZE 100
 #define TABELA_FA_SIZE 5
@@ -37,7 +36,6 @@ numThreads = 0, sockfd, signalActivated = 0;
 pthread_t* tid;
 struct timeval begin, end;
 tecnicofs* fs;
-pthread_mutex_t mutexInumberLock;
 char *socketName;
 int *tabSessoes;
 sem_t clientfd;
@@ -92,7 +90,7 @@ void terminateSession(int cli){
 }
 
 /* falta fazer um comando para terminar uma sessao */
-void applyCommands(char* command, char **tabFichAbertos, int cli){
+void applyCommands(uid_t owner, char* command, char **tabFichAbertos, int cli){
         char token;
         char arg1[MAX_INPUT_SIZE];
         char arg2[MAX_INPUT_SIZE];
@@ -121,19 +119,13 @@ void applyCommands(char* command, char **tabFichAbertos, int cli){
         	errorParse();
         }
         
-
         int searchResult;
-        int iNumber;
         switch (token) {
-
             case 'c':
-                {
-                if(pthread_mutex_lock(&mutexInumberLock))
-                    exit(EXIT_FAILURE);    
-                iNumber = obtainNewInumber(fs);
-                if(pthread_mutex_unlock(&mutexInumberLock))
-                    exit(EXIT_FAILURE);  
-                create(fs, arg1, iNumber);
+                { 
+				int cres = create(fs, arg1, arg2, owner);               		
+				sprintf(buffer, "%d", cres);
+                write(cli, buffer, 3);
                 }
                 break;
             case 'l':
@@ -161,13 +153,13 @@ void applyCommands(char* command, char **tabFichAbertos, int cli){
                 searchResult = lookup(fs, arg1);
                 if(!searchResult){
                 	sprintf(buffer, "%d", TECNICOFS_ERROR_FILE_NOT_FOUND);
-                    write(cli, buffer, 2);
+                    write(cli, buffer, 3);
                 }
                 else{
                     while (tabFichAbertos[i] != NULL) i++;
                     strcpy(tabFichAbertos[i], arg1);
                     sprintf(buffer, "%d", i);
-                    write(cli, buffer, 2);
+                    write(cli, buffer, 3);
                 }
                 }
                 break;
@@ -176,11 +168,11 @@ void applyCommands(char* command, char **tabFichAbertos, int cli){
                 if (tabFichAbertos[atoi(arg1)] != NULL){
                     tabFichAbertos[atoi(arg1)] = NULL;
 					sprintf(buffer, "%d", SUCCESS);
-        			write(cli, buffer, 2);                
+        			write(cli, buffer, 3);                
         		}
                 else{
 					sprintf(buffer, "%d", TECNICOFS_ERROR_FILE_NOT_OPEN);
-        			write(cli, buffer, 2);                
+        			write(cli, buffer, 3);                
         		}      
                 }
                 break;
@@ -207,13 +199,23 @@ void *trataCliente(void *arg){
     int clifd;
     char buff[BUFF_SIZE];
     char *tabFichAbertos[TABELA_FA_SIZE];
+    struct ucred ucred;
+    int ulen;
+    
     memset(buff, 0, sizeof(char));
 
     clifd = *cli;
     sem_post(&clientfd);
+    
+    ulen = sizeof(struct ucred);
+    if (getsockopt(clifd, SOL_SOCKET, SO_PEERCRED, &ucred, (socklen_t *) &ulen) == -1){
+        fprintf(stderr, "Error: Failed to get client credentials. \n");
+        exit(EXIT_FAILURE);
+    }
+
     while(1){
         read(clifd, buff, BUFF_SIZE);
-        applyCommands(buff, tabFichAbertos, clifd);
+        applyCommands(ucred.uid, buff, tabFichAbertos, clifd);
     }
 }
 

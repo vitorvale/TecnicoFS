@@ -48,7 +48,7 @@ int numberOfDigits(int n){
 
 	while(n != 0){
 		n /= 10;
-		count++
+		count++;
 	}
 
 	return count;
@@ -112,32 +112,25 @@ int tfsCreate(char *filename, permission ownerPermissions, permission othersPerm
 	end++;
 
 	if(ownerPermissions == READ){
-		*end = 'r';
-		end++;
+		*end = '1';
 	} else if(ownerPermissions == WRITE){
-		*end = 'w';
-		end++;
+		*end = '2';
 	} else if(ownerPermissions == RW){
-		strcpy(end, "rw");
-		end += 2;
+		*end = '3';
 	}
-	*end = ' ';
 	end++;
 
 	if(othersPermissions == NONE){
-		//empty
+		*end = '0';
 	} else if(othersPermissions == READ){
-		*end = 'r';
-		end++;
+		*end = '1';
 	} else if(othersPermissions == WRITE){
-		*end = 'w';
-		end++;
+		*end = '2';
 	} else if(othersPermissions == RW){
-		strcpy(end, "rw");
-		end += 2;
+		*end = '3';
 	}
-	*end = '\0';
 	end++;
+	*end = '\0';
 	
 	return commandResponse(command);
 }
@@ -181,15 +174,13 @@ int tfsOpen(char *filename, permission mode){
 	end++;
 
 	if(mode == READ){
-		*end = 'r';
-		end++;
+		*end = '1';
 	} else if(mode == WRITE){
-		*end = 'w';
-		end++;
+		*end = '2';
 	} else if(mode == RW){
-		strcpy(end, "rw");
-		end += 2;
-	} 
+		*end = '3';
+	}
+	end++; 
 	*end = '\0';
 
 	return commandResponse(command);
@@ -218,15 +209,15 @@ int tfsRead(int fd, char *buffer, int len){
 	write(sockfd, command, strlen(command));
 	read(sockfd, respBuffer, len+2);
 
-	if(atoi(respBuffer[0]) == 0){
+	if(atoi(&respBuffer[0]) == 0){
 		strcpy(buffer, &respBuffer[2]);
 		return strlen(buffer);
 	} 
 	else{
-		int d1 = atoi(respBuffer[0]), d2, err;
+		int d1 = atoi(&respBuffer[0]), d2, err;
 
 		if(respBuffer[1] != ' '){
-			d2 = atoi(respBuffer[1]);
+			d2 = atoi(&respBuffer[1]);
 		}
 		err = d1*10 + d2;
 		return err;
