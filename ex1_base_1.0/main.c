@@ -2,6 +2,7 @@
     grupo 1 : Vitor Vale  e Tomas Saraiva */
    
 /* proteger tabelaSessoes, numThreads, numSessoes com mutex */
+#define _GNU_SOURCE
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,8 +21,7 @@
 #include "lib/hash.h"
 #include "tecnicofs-api-constants.h"
 
-#define _GNU_SOURCE
-#define _POSIX_SOURCE
+//#define _POSIX_SOURCE
 #define MAX_COMMANDS 10
 #define MAX_INPUT_SIZE 100
 #define TABELA_FA_SIZE 5
@@ -40,6 +40,7 @@ tecnicofs* fs;
 pthread_mutex_t mutexInumberLock;
 char *socketName;
 int *tabSessoes;
+sem_t clientfd;
 
 static void displayUsage (const char* appName){
     printf("Usage: %s\n", appName);
@@ -47,7 +48,7 @@ static void displayUsage (const char* appName){
 }
 
 static void parseArgs (long argc, char* const argv[]){
-    if (argc != 5) {
+    if (argc != 4) {
         fprintf(stderr, "Invalid format:\n");
         displayUsage(argv[0]);
     }
@@ -61,11 +62,41 @@ void errorParse(){
     exit(EXIT_FAILURE);
 }
 
+void terminateSession(int cli){
+    int sessionExistsFlag = 0, ulen, i; 
+    struct ucred ucred;
+    char buffer[3];
+
+    ulen = sizeof(struct ucred);
+    if (getsockopt(cli, SOL_SOCKET, SO_PEERCRED, &ucred, (socklen_t *) &ulen) == -1){
+        fprintf(stderr, "Error: Failed to get client credentials. \n");
+        exit(EXIT_FAILURE);
+    }
+        
+    for(i = 0; i < tabSessoesSize; i++){
+        if(ucred.uid == tabSessoes[i]){
+            sessionExistsFlag++;
+            break;
+        }
+    }
+    if(sessionExistsFlag == 0){
+    	sprintf(buffer, "%d", TECNICOFS_ERROR_NO_OPEN_SESSION);
+        write(cli, buffer, 2);
+    }
+    else{
+        tabSessoes[i] = UID_NULL;
+        numSessoes--;
+        sprintf(buffer, "%d", SUCCESS);
+        write(cli, buffer, 2);
+    }
+}
+
 /* falta fazer um comando para terminar uma sessao */
 void applyCommands(char* command, char **tabFichAbertos, int cli){
         char token;
         char arg1[MAX_INPUT_SIZE];
         char arg2[MAX_INPUT_SIZE];
+        char buffer[3];
         /* verificacao do token */
         int numTokens = sscanf(command, "%c", &token);
 
@@ -74,15 +105,20 @@ void applyCommands(char* command, char **tabFichAbertos, int cli){
         if(token == 'd' || token == 'x'){
             numTokens += sscanf(command, "%c %s", &token, arg1) - 1; 
         }
+        else if(token == 's'){
+        	//empty
+        }
         else{
             numTokens += sscanf(command, "%c %s %s", &token, arg1, arg2) - 1;
         }
-
         if ((numTokens != 2) && (token == 'd' || token == 'x')) {
             errorParse();
         }
-        else if((numTokens != 3) && (token != 'd' && token != 'x')){
+        else if((numTokens != 3) && (token != 'd' && token != 'x' && token != 's')){
             errorParse();
+        }
+        else if((numTokens != 1) && (token == 's')){
+        	errorParse();
         }
         
 
@@ -123,25 +159,29 @@ void applyCommands(char* command, char **tabFichAbertos, int cli){
                 {
                 int i = 0;
                 searchResult = lookup(fs, arg1);
-                if(!searchResult)
-                    write(cli, (char *) TECNICOFS_ERROR_FILE_NOT_FOUND, 2);
+                if(!searchResult){
+                	sprintf(buffer, "%d", TECNICOFS_ERROR_FILE_NOT_FOUND);
+                    write(cli, buffer, 2);
+                }
                 else{
                     while (tabFichAbertos[i] != NULL) i++;
                     strcpy(tabFichAbertos[i], arg1);
-                    write(cli,(char *) i, 2);
+                    sprintf(buffer, "%d", i);
+                    write(cli, buffer, 2);
                 }
                 }
                 break;
             case 'x':
                 {
-                int i = 0;
                 if (tabFichAbertos[atoi(arg1)] != NULL){
                     tabFichAbertos[atoi(arg1)] = NULL;
-                    write(cli, (char *) SUCCESS, 2) ;
-                }
+					sprintf(buffer, "%d", SUCCESS);
+        			write(cli, buffer, 2);                
+        		}
                 else{
-                    write(cli, (char *) TECNICOFS_ERROR_FILE_NOT_OPEN, 2);
-                }      
+					sprintf(buffer, "%d", TECNICOFS_ERROR_FILE_NOT_OPEN);
+        			write(cli, buffer, 2);                
+        		}      
                 }
                 break;
             case 's':
@@ -162,64 +202,42 @@ void applyCommands(char* command, char **tabFichAbertos, int cli){
         }
 }
 
-void terminateSession(int cli){
-    int sessionExistsFlag = 0, ulen, i; 
-    struct ucred ucred;
-
-    ulen = sizeof(struct ucred);
-    if (getsockopt(cli, SOL_SOCKET, SO_PEERCRED, &ucred, &ulen) == -1){
-        fprintf(stderr, "Error: Failed to get client credentials. \n");
-        exit(EXIT_FAILURE);
-    }
-        
-    for(i = 0; i < tabSessoesSize; i++){
-        if(ucred.uid == tabSessoes[i]){
-            sessionExistsFlag++;
-            break;
-        }
-    }
-    if(sessionExistsFlag == 0){
-        write(cli, (char *) TECNICOFS_ERROR_NO_OPEN_SESSION, 2);
-    }
-    else{
-        tabSessoes[i] = UID_NULL;
-        numSessoes--;
-        write(cli, (char *) SUCCESS, 2);
-    }
-}
-
-void criaThread(int cli){
-    
-    if (numThreads = tidTableSize){
-        tid = (pthread_t *) realloc(tid, sizeof(pthread_t)*(++tidTableSize));
-    }
-    
-    if(pthread_create(&tid[numThreads++], 0, trataCliente, (void *) cli) != 0){
-        exit(EXIT_FAILURE);
-    }
-}
-
 void *trataCliente(void *arg){
-    int *cli = arg;
-    int clifd = *(cli);
+    int *cli = (int*) arg;
+    int clifd;
     char buff[BUFF_SIZE];
     char *tabFichAbertos[TABELA_FA_SIZE];
     memset(buff, 0, sizeof(char));
-    memset(buff, 0, sizeof(char));
 
+    clifd = *cli;
+    sem_post(&clientfd);
     while(1){
         read(clifd, buff, BUFF_SIZE);
         applyCommands(buff, tabFichAbertos, clifd);
     }
 }
 
+void criaThread(int cli){
+    
+    if (numThreads == tidTableSize){
+        tid = (pthread_t *) realloc(tid, sizeof(pthread_t)*(++tidTableSize));
+    }
+    
+    if(pthread_create(&tid[numThreads++], 0, trataCliente, (void *) &cli) != 0){
+        exit(EXIT_FAILURE);
+    }
+    sem_wait(&clientfd);
+}
 
+void rotinaTratamentoSignal(){
+    signalActivated++;
+    signal(SIGINT, rotinaTratamentoSignal);
+}
 
 int main(int argc, char* argv[]) {
     time_t t;
-    struct sockaddr_un server_addr, cli_addr;
-    int cli, clilen, ulen, i;
-    long uid;
+    struct sockaddr_un server_addr;
+    int cli, ulen, i;
     struct ucred ucred;
     sigset_t signal_mask;
     FILE *fout;
@@ -231,9 +249,13 @@ int main(int argc, char* argv[]) {
     
     parseArgs(argc, argv);
 
+    if(sem_init(&clientfd, 0, 0) == -1){
+    	exit(EXIT_FAILURE);
+    }
+
     fs = new_tecnicofs(numberBuckets);
-    fout = open(argv[2], 'w');
-    if (fout == -1){
+    fout = fopen(argv[2], "w");
+    if (fout == NULL){
         fprintf(stderr, "Error: Failed to get client credentials. \n");
         exit(EXIT_FAILURE);
     }
@@ -273,13 +295,13 @@ int main(int argc, char* argv[]) {
 
     while(signalActivated == 0) {
         int sessionAlreadyExistsFlag = 0;
-        cli = accept(sockfd, (struct sockaddr *) &cli_addr, &clilen);
+        cli = accept(sockfd, NULL, NULL);
         if (cli == -1){
             fprintf(stderr, "Error: Failed to accept connection. \n");
             exit(EXIT_FAILURE);
         }
         ulen = sizeof(struct ucred);
-        if (getsockopt(cli, SOL_SOCKET, SO_PEERCRED, &ucred, &ulen) == -1){
+        if (getsockopt(cli, SOL_SOCKET, SO_PEERCRED, &ucred, (socklen_t *) &ulen) == -1){
             fprintf(stderr, "Error: Failed to get client credentials. \n");
             exit(EXIT_FAILURE);
         }
@@ -303,7 +325,7 @@ int main(int argc, char* argv[]) {
     }
 
     for (i = 0; i < (numThreads - 1); i++){
-        pthread_join(&tid[i], NULL);
+        pthread_join(tid[i], NULL);
     }
 
     gettimeofday(&end, NULL);
@@ -311,7 +333,7 @@ int main(int argc, char* argv[]) {
     printf("TecnicoFS completed in %0.4f seconds.\n", (end.tv_sec + (end.tv_usec / 1000000.0)) - (begin.tv_sec + (begin.tv_usec / 1000000.0)));
     print_tecnicofs_trees(fout, fs);
 
-    if(close(fout) == -1){
+    if(fclose(fout) == EOF){
         fprintf(stderr, "Error: Failed to get client credentials. \n");
         exit(EXIT_FAILURE);
     }
@@ -322,6 +344,10 @@ int main(int argc, char* argv[]) {
         exit(EXIT_FAILURE);
     }
 
+    if(sem_destroy(&clientfd) == -1){
+    	exit(EXIT_FAILURE);
+    }
+
     free(tid);
     free_tecnicofs(fs);
     free(tabSessoes);
@@ -329,7 +355,3 @@ int main(int argc, char* argv[]) {
     exit(EXIT_SUCCESS);
 }
 
-void rotinaTratamentoSignal(){
-    signalActivated++;
-    signal(SIGINT, rotinaTratamentoSignal);
-}
