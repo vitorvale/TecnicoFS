@@ -24,7 +24,7 @@ int createSocket(){
 int commandResponse(char* command){
 	char command_resp[3];
 
-	write(sockfd, command, strlen(command));
+	write(sockfd, command, strlen(command)+1);
 	read(sockfd, command_resp, 3);
 
 	/*if(atoi(command_resp[0]) == 0){

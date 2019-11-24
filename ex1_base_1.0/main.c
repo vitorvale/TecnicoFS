@@ -19,11 +19,9 @@
 #include <signal.h>
 #include "fs.h"
 #include "lib/hash.h"
-#include "tecnicofs-api-constants.h"
 
 #define MAX_COMMANDS 10
 #define MAX_INPUT_SIZE 100
-#define TABELA_FA_SIZE 5
 #define BUFF_SIZE 1024
 #define FD_NULL -1
 #define UID_NULL -1
@@ -90,13 +88,15 @@ void terminateSession(int cli){
 }
 
 /* falta fazer um comando para terminar uma sessao */
-void applyCommands(uid_t owner, char* command, char **tabFichAbertos, int cli){
+void applyCommands(uid_t owner, char* command, openfileLink *tabFichAbertos, int cli){
         char token;
         char arg1[MAX_INPUT_SIZE];
         char arg2[MAX_INPUT_SIZE];
         char buffer[3];
         /* verificacao do token */
         int numTokens = sscanf(command, "%c", &token);
+
+        /*SE O COMANDO TIVER ARGS A MAIS NAO VERIFICA!!!!!!!!*/
 
         /* tratamento do resto do comando em funcao do token,
         subtraimos 1 valor para nao contar o token que ja foi lido */
@@ -139,7 +139,9 @@ void applyCommands(uid_t owner, char* command, char **tabFichAbertos, int cli){
                 break;
             case 'd':
                 {
-                delete(fs, arg1);
+                int dres = delete(fs, arg1, owner, tabFichAbertos);
+                sprintf(buffer, "%d", dres);
+                write(cli, buffer, 3);
                 }
                 break;
             case 'r':
@@ -149,15 +151,22 @@ void applyCommands(uid_t owner, char* command, char **tabFichAbertos, int cli){
                 break;
             case 'o':
                 {
+
                 int i = 0;
                 searchResult = lookup(fs, arg1);
-                if(!searchResult){
+                if(searchResult == -1){
                 	sprintf(buffer, "%d", TECNICOFS_ERROR_FILE_NOT_FOUND);
                     write(cli, buffer, 3);
                 }
                 else{
+                    openfileLink file = (openfileLink) malloc(sizeof(openfile_t));
+                    file->filename = (char*) malloc(strlen(arg1));
+                    strcpy(file->filename, arg1);
+                    file->mode = atoi(arg2);
+
                     while (tabFichAbertos[i] != NULL) i++;
-                    strcpy(tabFichAbertos[i], arg1);
+                    
+                    tabFichAbertos[i] = file;
                     sprintf(buffer, "%d", i);
                     write(cli, buffer, 3);
                 }
@@ -166,6 +175,8 @@ void applyCommands(uid_t owner, char* command, char **tabFichAbertos, int cli){
             case 'x':
                 {
                 if (tabFichAbertos[atoi(arg1)] != NULL){
+                    free(tabFichAbertos[atoi(arg1)]->filename);
+                    free(tabFichAbertos[atoi(arg1)]);
                     tabFichAbertos[atoi(arg1)] = NULL;
 					sprintf(buffer, "%d", SUCCESS);
         			write(cli, buffer, 3);                
@@ -184,6 +195,13 @@ void applyCommands(uid_t owner, char* command, char **tabFichAbertos, int cli){
                     exit(EXIT_FAILURE);
                 }
                 numThreads--;
+                for(int i = 0; i < TABELA_FA_SIZE; i++){
+                    if(tabFichAbertos[i] != NULL){
+                        free(tabFichAbertos[i]->filename);
+                        free(tabFichAbertos[i]);
+                    }
+                }
+                free(tabFichAbertos);
                 exit(0);
                 }
                 break;                
@@ -198,7 +216,7 @@ void *trataCliente(void *arg){
     int *cli = (int*) arg;
     int clifd;
     char buff[BUFF_SIZE];
-    char *tabFichAbertos[TABELA_FA_SIZE];
+    openfileLink *tabFichAbertos = (openfileLink*) malloc(sizeof(openfileLink) * TABELA_FA_SIZE);
     struct ucred ucred;
     int ulen;
     
@@ -214,6 +232,7 @@ void *trataCliente(void *arg){
     }
 
     while(1){
+        memset(buff, 0, sizeof(char));
         read(clifd, buff, BUFF_SIZE);
         applyCommands(ucred.uid, buff, tabFichAbertos, clifd);
     }

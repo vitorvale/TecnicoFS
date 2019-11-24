@@ -81,12 +81,46 @@ int create(tecnicofs* fs, char *name, char* permissions, uid_t owner){
     return 0;
 }
 
-void delete(tecnicofs* fs, char *name){
-    int ix = 0;
+int delete(tecnicofs* fs, char *name, uid_t userid, openfileLink *tabFichAbertos){
+    int ix = 0, i = 0;
+    node *t;
     ix = hash(name, fs->numBst);
+    uid_t owner;
 
     if(pthread_rwlock_wrlock(&(fs->hashtable[ix]->rwBstLock))){
         exit(EXIT_FAILURE);
+    }
+
+    if((t = search(fs->hashtable[ix]->bstRoot, name)) == NULL){
+        if(pthread_rwlock_unlock(&fs->hashtable[ix]->rwBstLock))
+            exit(EXIT_FAILURE);
+        return TECNICOFS_ERROR_FILE_NOT_FOUND;
+    }
+
+    for(i = 0; i < TABELA_FA_SIZE; i++){
+        if((tabFichAbertos[i] != NULL) && (!strcmp(tabFichAbertos[i]->filename, name))){
+            if(pthread_rwlock_unlock(&fs->hashtable[ix]->rwBstLock))
+                exit(EXIT_FAILURE);
+            return TECNICOFS_ERROR_FILE_IS_OPEN;
+        }
+    }
+
+    if(inode_get(t->inumber, &owner, NULL, NULL, NULL, 0) == -1){
+        if(pthread_rwlock_unlock(&fs->hashtable[ix]->rwBstLock))
+            exit(EXIT_FAILURE);
+        return TECNICOFS_ERROR_OTHER;
+    }
+
+    if(owner != userid){
+        if(pthread_rwlock_unlock(&fs->hashtable[ix]->rwBstLock))
+            exit(EXIT_FAILURE);
+        return TECNICOFS_ERROR_PERMISSION_DENIED;
+    }
+
+    if(inode_delete(t->inumber) == -1){
+        if(pthread_rwlock_unlock(&fs->hashtable[ix]->rwBstLock))
+            exit(EXIT_FAILURE);
+        return TECNICOFS_ERROR_OTHER;
     }
 
 	fs->hashtable[ix]->bstRoot = remove_item(fs->hashtable[ix]->bstRoot, name);
@@ -94,6 +128,7 @@ void delete(tecnicofs* fs, char *name){
     if(pthread_rwlock_unlock(&(fs->hashtable[ix]->rwBstLock))){
         exit(EXIT_FAILURE);
     }
+    return 0;
 }
 
 int lookup(tecnicofs* fs, char *name){
@@ -104,9 +139,9 @@ int lookup(tecnicofs* fs, char *name){
         exit(EXIT_FAILURE);
     }
 
-	int inumber = 0;
+	int inumber = -1;
 	node* searchNode = search(fs->hashtable[ix]->bstRoot, name);
-	if ( searchNode ){ 
+	if (searchNode != NULL){ 
 		inumber = searchNode->inumber;
 	}
     if(pthread_rwlock_unlock(&(fs->hashtable[ix]->rwBstLock))){

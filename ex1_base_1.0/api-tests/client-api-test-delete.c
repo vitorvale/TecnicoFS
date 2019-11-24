@@ -15,15 +15,15 @@ int main(int argc, char** argv) {
     assert(tfsCreate("a", RW, READ) == 0);
     assert((fd = tfsOpen("a", RW)) == 0);
 
-    printf("Test: delete open file");
+    printf("Test: delete open file\n");
     assert(tfsDelete("a") == TECNICOFS_ERROR_FILE_IS_OPEN);
 
     assert((fd = tfsClose(0)) == 0);
 
-    printf("Test: delete file success");
+    printf("Test: delete file success\n");
     assert(tfsDelete("a") == 0);
     
-    printf("Test: delete file that does not exist");
+    printf("Test: delete file that does not exist\n");
     assert(tfsDelete("b") == TECNICOFS_ERROR_FILE_NOT_FOUND);
     assert(tfsUnmount() == 0);
     return 0;
