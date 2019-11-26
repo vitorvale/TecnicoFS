@@ -1,7 +1,7 @@
 /* Projeto SO - 
     grupo 1 : Vitor Vale  e Tomas Saraiva */
    
-/* proteger tabelaSessoes, numThreads, numSessoes com mutex */
+/* proteger numThreads com mutex */
 /* fazer validacao nos mallocs, ie verificar retorno */
 #define _GNU_SOURCE
 
@@ -31,13 +31,15 @@
 
 long numberBuckets = 0;
 int tidTableSize = 0, tabSessoesSize = 0, numSessoes = 0, 
-numThreads = 0, sockfd, signalActivated = 0;
+numThreads = 0, sockfd, signalActivated = 0, numThreadsOnSignal;
 pthread_t* tid;
 struct timeval begin, end;
 tecnicofs* fs;
 char *socketName;
 int *tabSessoes;
 sem_t clientfd;
+pthread_rwlock_t tabSessoesLock;
+pthread_rwlock_t numThreadsLock;
 
 static void displayUsage (const char* appName){
     printf("Usage: %s\n", appName);
@@ -80,22 +82,35 @@ void terminateSession(int cli){
         fprintf(stderr, "Error: Failed to get client credentials. \n");
         exit(EXIT_FAILURE);
     }
-        
+
+    if (pthread_rwlock_rdlock(&tabSessoesLock) != 0){
+        exit(EXIT_FAILURE);
+    }    
     for(i = 0; i < tabSessoesSize; i++){
         if(ucred.uid == tabSessoes[i]){
             sessionExistsFlag++;
             break;
         }
     }
+    if (pthread_rwlock_unlock(&tabSessoesLock) != 0){
+        exit(EXIT_FAILURE);
+    }
+
     if(sessionExistsFlag == 0){
     	sprintf(buffer, "%d", TECNICOFS_ERROR_NO_OPEN_SESSION);
         write(cli, buffer, BUFF_RESP_SIZE);
     }
     else{
+        if (pthread_rwlock_wrlock(&tabSessoesLock) != 0){
+            exit(EXIT_FAILURE);
+        }
         tabSessoes[i] = UID_NULL;
         numSessoes--;
         sprintf(buffer, "%d", SUCCESS);
         write(cli, buffer, BUFF_RESP_SIZE);
+        if (pthread_rwlock_unlock(&tabSessoesLock) != 0){
+            exit(EXIT_FAILURE);
+        }
     }
 }
 
@@ -225,7 +240,13 @@ void applyCommands(uid_t owner, char* command, openfileLink *tabFichAbertos, int
                     fprintf(stderr, "Error: Failed to close the client socket. \n");
                     exit(EXIT_FAILURE);
                 }
+                if (pthread_rwlock_wrlock(&numThreadsLock) != 0){
+                    exit(EXIT_FAILURE);
+                }
                 numThreads--;
+                if (pthread_rwlock_unlock(&numThreadsLock) != 0){
+                    exit(EXIT_FAILURE);
+                }
                 for(int i = 0; i < TABELA_FA_SIZE; i++){
                     if(tabFichAbertos[i] != NULL){
                         free(tabFichAbertos[i]->filename);
@@ -271,24 +292,37 @@ void *trataCliente(void *arg){
 
 void criaThread(int cli){
     
+    if (pthread_rwlock_rdlock(&numThreadsLock) != 0){
+        exit(EXIT_FAILURE);
+    }
     if (numThreads == tidTableSize){
         tid = (pthread_t *) realloc(tid, sizeof(pthread_t)*(++tidTableSize));
     }
+    if (pthread_rwlock_unlock(&numThreadsLock) != 0){
+        exit(EXIT_FAILURE);
+    }
     
+    if (pthread_rwlock_wrlock(&numThreadsLock) != 0){
+        exit(EXIT_FAILURE);
+    }
     if(pthread_create(&tid[numThreads++], 0, trataCliente, (void *) &cli) != 0){
+        exit(EXIT_FAILURE);
+    }
+    if (pthread_rwlock_unlock(&numThreadsLock) != 0){
         exit(EXIT_FAILURE);
     }
     sem_wait(&clientfd);
 }
 
 void rotinaTratamentoSignal(){
+    numThreadsOnSignal = numThreads;
     signalActivated++;
 }
 
 int main(int argc, char* argv[]) {
     time_t t;
     struct sockaddr_un server_addr;
-    int cli, ulen, i;
+    int cli, ulen, i, numThreadsAux;
     struct ucred ucred;
     sigset_t signal_mask;
     FILE *fout;
@@ -303,6 +337,14 @@ int main(int argc, char* argv[]) {
 
     if(sem_init(&clientfd, 0, 0) == -1){
     	exit(EXIT_FAILURE);
+    }
+
+    if (pthread_rwlock_init(&tabSessoesLock ,NULL) != 0){
+        exit(EXIT_FAILURE);
+    }
+
+    if (pthread_rwlock_init(&numThreadsLock ,NULL) != 0){
+        exit(EXIT_FAILURE);
     }
 
     fs = new_tecnicofs(numberBuckets);
@@ -364,17 +406,32 @@ int main(int argc, char* argv[]) {
             fprintf(stderr, "Error: Failed to get client credentials. \n");
             exit(EXIT_FAILURE);
         }
+
+        if (pthread_rwlock_rdlock(&tabSessoesLock) != 0){
+            exit(EXIT_FAILURE);
+        }
         for(i = 0; i < tabSessoesSize; i++){
             if(ucred.uid == tabSessoes[i]){
                 sessionAlreadyExistsFlag++;
                 break;
             }
         }
+        if (pthread_rwlock_unlock(&tabSessoesLock) != 0){
+            exit(EXIT_FAILURE);
+        }
+
         if(sessionAlreadyExistsFlag == 0){
+            if (pthread_rwlock_wrlock(&tabSessoesLock) != 0){
+                exit(EXIT_FAILURE);
+            }
             if(numSessoes == tabSessoesSize)
                 tabSessoes = (int *) realloc(tabSessoes, sizeof(int*)*(++tabSessoesSize));
             tabSessoes[numSessoes++] = ucred.uid;
             write(cli, "no\0", 3);
+
+            if (pthread_rwlock_unlock(&tabSessoesLock) != 0){
+                exit(EXIT_FAILURE);
+            }
         }
         else{
             write(cli, "yes\0", 4);
@@ -383,7 +440,7 @@ int main(int argc, char* argv[]) {
         criaThread(cli);
     }
 
-    for (i = 0; i < (numThreads - 1); i++){
+    for (i = 0; i < numThreadsOnSignal; i++){
         pthread_join(tid[i], NULL);
     }
 
@@ -405,6 +462,14 @@ int main(int argc, char* argv[]) {
 
     if(sem_destroy(&clientfd) == -1){
     	exit(EXIT_FAILURE);
+    }
+
+    if (pthread_rwlock_destroy(&tabSessoesLock) != 0){
+        exit(EXIT_FAILURE);
+    }
+
+    if (pthread_rwlock_destroy(&numThreadsLock) != 0){
+        exit(EXIT_FAILURE);
     }
 
     free(tid);
