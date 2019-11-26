@@ -18,29 +18,30 @@ int main(int argc, char** argv) {
     assert((fd = tfsOpen("abc", RW)) == 0);
     assert(tfsWrite(fd, "12345", 5) == 0);
     
-    printf("Test: read full file content");
+    printf("Test: read full file content\n");
     assert(tfsRead(fd, readBuffer, 6) == 5);
     printf("Content read: %s\n", readBuffer);
     
-    printf("Test: read only first 3 characters of file content");
+    printf("Test: read only first 3 characters of file content\n");
     memset(readBuffer, 0, 10*sizeof(char));
     assert(tfsRead(fd, readBuffer, 4) == 3);
     printf("Content read: %s\n", readBuffer);
     
-    printf("Test: read with buffer bigger than file content");
+    printf("Test: read with buffer bigger than file content\n");
     memset(readBuffer, 0, 10*sizeof(char));
     assert(tfsRead(fd, readBuffer, 10) == 5);
     printf("Content read: %s\n", readBuffer);
 
     assert(tfsClose(fd) == 0);
 
-    printf("Test: read closed file");
+    printf("Test: read closed file\n");
     assert(tfsRead(fd, readBuffer, 6) == TECNICOFS_ERROR_FILE_NOT_OPEN);
 
-    printf("Test: read file open in write mode");
+    printf("Test: read file open in write mode\n");
     assert((fd = tfsOpen("abc", WRITE)) == 0);
     assert(tfsRead(fd, readBuffer, 6) == TECNICOFS_ERROR_INVALID_MODE);
 
+    assert(tfsClose(fd) == 0);
 
     assert(tfsDelete("abc") == 0);
     assert(tfsUnmount() == 0);

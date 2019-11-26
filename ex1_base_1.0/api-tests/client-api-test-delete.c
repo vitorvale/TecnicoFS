@@ -13,12 +13,6 @@ int main(int argc, char** argv) {
     int fd = -1;
     assert(tfsMount(argv[1]) == 0);
     assert(tfsCreate("a", RW, READ) == 0);
-    assert((fd = tfsOpen("a", RW)) == 0);
-
-    printf("Test: delete open file\n");
-    assert(tfsDelete("a") == TECNICOFS_ERROR_FILE_IS_OPEN);
-
-    assert((fd = tfsClose(0)) == 0);
 
     printf("Test: delete file success\n");
     assert(tfsDelete("a") == 0);

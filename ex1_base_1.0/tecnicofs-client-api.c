@@ -22,10 +22,10 @@ int createSocket(){
 }
 
 int commandResponse(char* command){
-	char command_resp[3];
+	char command_resp[4];
 
 	write(sockfd, command, strlen(command)+1);
-	read(sockfd, command_resp, 3);
+	read(sockfd, command_resp, 4);
 
 	/*if(atoi(command_resp[0]) == 0){
 		return 0;
@@ -173,9 +173,9 @@ int tfsOpen(char *filename, permission mode){
 	*end = ' ';
 	end++;
 
-	if(mode == READ){
+	if(mode == WRITE){
 		*end = '1';
-	} else if(mode == WRITE){
+	} else if(mode == READ){
 		*end = '2';
 	} else if(mode == RW){
 		*end = '3';
@@ -206,20 +206,15 @@ int tfsRead(int fd, char *buffer, int len){
 	command[2] = sfd[0];
 	strcpy(&command[4], slen);
 
-	write(sockfd, command, strlen(command));
+	write(sockfd, command, strlen(command) + 1);
 	read(sockfd, respBuffer, len+2);
 
-	if(atoi(&respBuffer[0]) == 0){
+	if(respBuffer[1] == ' '){
 		strcpy(buffer, &respBuffer[2]);
 		return strlen(buffer);
 	} 
 	else{
-		int d1 = atoi(&respBuffer[0]), d2, err;
-
-		if(respBuffer[1] != ' '){
-			d2 = atoi(&respBuffer[1]);
-		}
-		err = d1*10 + d2;
+		int err = atoi(respBuffer);
 		return err;
 	}
 }

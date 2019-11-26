@@ -8,6 +8,7 @@
 #include "tecnicofs-api-constants.h"
 
 #define TABELA_FA_SIZE 5
+#define SUCCESS 0
 
 typedef struct openfile{
 	char *filename;
@@ -35,6 +36,9 @@ int create(tecnicofs* fs, char *name, char* permissions, uid_t owner);
 int delete(tecnicofs* fs, char *name, uid_t userid, openfileLink *tabFichAbertos);
 int lookup(tecnicofs* fs, char *name);
 void print_tecnicofs_trees(FILE * fp, tecnicofs *fs);
-void renameFile(tecnicofs *fs, char *name, char* nameAux);
+int renameFile(tecnicofs *fs, char *name, char* nameAux, uid_t user);
+void renameUnlock(tecnicofs *fs,int flagTrylockOne, int flagTrylockTwo, int ix1, int ix2);
+int writeToFile(tecnicofs *fs, openfileLink *tabFichAbertos, int index, char* content);
+int readFromFile(tecnicofs *fs, openfileLink *tabFichAbertos, int index, char *buffer, int len);
 
 #endif /* FS_H */

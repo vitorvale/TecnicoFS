@@ -2,6 +2,7 @@
     grupo 1 : Vitor Vale  e Tomas Saraiva */
    
 /* proteger tabelaSessoes, numThreads, numSessoes com mutex */
+/* fazer validacao nos mallocs, ie verificar retorno */
 #define _GNU_SOURCE
 
 #include <stdio.h>
@@ -25,7 +26,7 @@
 #define BUFF_SIZE 1024
 #define FD_NULL -1
 #define UID_NULL -1
-#define SUCCESS 0
+#define BUFF_RESP_SIZE 3
 
 
 long numberBuckets = 0;
@@ -58,10 +59,21 @@ void errorParse(){
     exit(EXIT_FAILURE);
 }
 
+int numberOfDigits(int n){
+    int count = 0;
+
+    while(n != 0){
+        n /= 10;
+        count++;
+    }
+
+    return count;
+}
+
 void terminateSession(int cli){
     int sessionExistsFlag = 0, ulen, i; 
     struct ucred ucred;
-    char buffer[3];
+    char buffer[BUFF_RESP_SIZE];
 
     ulen = sizeof(struct ucred);
     if (getsockopt(cli, SOL_SOCKET, SO_PEERCRED, &ucred, (socklen_t *) &ulen) == -1){
@@ -77,13 +89,13 @@ void terminateSession(int cli){
     }
     if(sessionExistsFlag == 0){
     	sprintf(buffer, "%d", TECNICOFS_ERROR_NO_OPEN_SESSION);
-        write(cli, buffer, 2);
+        write(cli, buffer, BUFF_RESP_SIZE);
     }
     else{
         tabSessoes[i] = UID_NULL;
         numSessoes--;
         sprintf(buffer, "%d", SUCCESS);
-        write(cli, buffer, 2);
+        write(cli, buffer, BUFF_RESP_SIZE);
     }
 }
 
@@ -92,9 +104,11 @@ void applyCommands(uid_t owner, char* command, openfileLink *tabFichAbertos, int
         char token;
         char arg1[MAX_INPUT_SIZE];
         char arg2[MAX_INPUT_SIZE];
-        char buffer[3];
+        char buffer[BUFF_RESP_SIZE];
         /* verificacao do token */
         int numTokens = sscanf(command, "%c", &token);
+
+        printf("command : %s\n", command);
 
         /*SE O COMANDO TIVER ARGS A MAIS NAO VERIFICA!!!!!!!!*/
 
@@ -125,38 +139,48 @@ void applyCommands(uid_t owner, char* command, openfileLink *tabFichAbertos, int
                 { 
 				int cres = create(fs, arg1, arg2, owner);               		
 				sprintf(buffer, "%d", cres);
-                write(cli, buffer, 3);
+                write(cli, buffer, BUFF_RESP_SIZE);
                 }
                 break;
             case 'l':
                 {
-                searchResult = lookup(fs, arg1);
-                if(!searchResult)
-                    printf( "%s not found\n", arg1);
-                else
-                    printf("%s found with inumber %d\n", arg1, searchResult);
+                char contentBuffer[atoi(arg2)];
+                int rdRes = readFromFile(fs, tabFichAbertos, atoi(arg1), contentBuffer, atoi(arg2));
+                if (rdRes >= 0){ 
+                    char respBuffer[numberOfDigits(rdRes) + atoi(arg2) + 1];
+                    sprintf(respBuffer, "%d", rdRes);
+                    respBuffer[numberOfDigits(rdRes)] = ' ';
+                    strcpy(&respBuffer[numberOfDigits(rdRes) + 1], contentBuffer);
+                    write(cli, respBuffer, numberOfDigits(rdRes) + atoi(arg2) + 1);
+                }
+                else{
+                    char respBuffer[1 + numberOfDigits(rdRes) + 1];
+                    sprintf(respBuffer, "%d", rdRes);
+                    write(cli, respBuffer, numberOfDigits(rdRes) + 2); 
+                }    
                 }    
                 break;
             case 'd':
                 {
                 int dres = delete(fs, arg1, owner, tabFichAbertos);
                 sprintf(buffer, "%d", dres);
-                write(cli, buffer, 3);
+                write(cli, buffer, BUFF_RESP_SIZE);
                 }
                 break;
             case 'r':
                 {
-                renameFile(fs, arg1, arg2);   
+                int renamRes = renameFile(fs, arg1, arg2, owner);
+                sprintf(buffer, "%d", renamRes);
+                write(cli, buffer, BUFF_RESP_SIZE);
                 }
                 break;
             case 'o':
                 {
-
                 int i = 0;
                 searchResult = lookup(fs, arg1);
                 if(searchResult == -1){
                 	sprintf(buffer, "%d", TECNICOFS_ERROR_FILE_NOT_FOUND);
-                    write(cli, buffer, 3);
+                    write(cli, buffer, BUFF_RESP_SIZE);
                 }
                 else{
                     openfileLink file = (openfileLink) malloc(sizeof(openfile_t));
@@ -168,7 +192,7 @@ void applyCommands(uid_t owner, char* command, openfileLink *tabFichAbertos, int
                     
                     tabFichAbertos[i] = file;
                     sprintf(buffer, "%d", i);
-                    write(cli, buffer, 3);
+                    write(cli, buffer, BUFF_RESP_SIZE);
                 }
                 }
                 break;
@@ -179,14 +203,21 @@ void applyCommands(uid_t owner, char* command, openfileLink *tabFichAbertos, int
                     free(tabFichAbertos[atoi(arg1)]);
                     tabFichAbertos[atoi(arg1)] = NULL;
 					sprintf(buffer, "%d", SUCCESS);
-        			write(cli, buffer, 3);                
+        			write(cli, buffer, BUFF_RESP_SIZE);                
         		}
                 else{
 					sprintf(buffer, "%d", TECNICOFS_ERROR_FILE_NOT_OPEN);
-        			write(cli, buffer, 3);                
+        			write(cli, buffer, BUFF_RESP_SIZE);                
         		}      
                 }
                 break;
+            case 'w':
+                {
+                int wres = writeToFile(fs, tabFichAbertos, atoi(arg1), arg2);
+                sprintf(buffer, "%d", wres);
+                write(cli, buffer, BUFF_RESP_SIZE);
+                }
+                break;    
             case 's':
                 {
                 terminateSession(cli);

@@ -24,7 +24,7 @@ tecnicofs* new_tecnicofs(int numberBuckets){
 
     fs->numBst = numberBuckets;
     inode_table_init(); 
-    fs->hashtable = (bstLink) malloc(sizeof(Bst)*numberBuckets);
+    fs->hashtable = (bstLink) malloc(sizeof(Bst*)*numberBuckets);
 
     for (i = 0; i < fs->numBst; i++){
         fs->hashtable[i] = (Bst*) malloc(sizeof(Bst));
@@ -78,7 +78,7 @@ int create(tecnicofs* fs, char *name, char* permissions, uid_t owner){
         exit(EXIT_FAILURE);
     }
 
-    return 0;
+    return SUCCESS;
 }
 
 int delete(tecnicofs* fs, char *name, uid_t userid, openfileLink *tabFichAbertos){
@@ -128,7 +128,7 @@ int delete(tecnicofs* fs, char *name, uid_t userid, openfileLink *tabFichAbertos
     if(pthread_rwlock_unlock(&(fs->hashtable[ix]->rwBstLock))){
         exit(EXIT_FAILURE);
     }
-    return 0;
+    return SUCCESS;
 }
 
 int lookup(tecnicofs* fs, char *name){
@@ -159,17 +159,36 @@ void print_tecnicofs_trees(FILE * fp, tecnicofs *fs){
     }
 }
 
-void renameFile(tecnicofs *fs, char *name, char* nameAux){
+void renameUnlock(tecnicofs *fs,int flagTrylockOne, int flagTrylockTwo, int ix1, int ix2){
+    if (flagTrylockOne == 0){
+        if(pthread_rwlock_unlock(&(fs->hashtable[ix1]->rwBstLock))){
+            exit(EXIT_FAILURE);
+        }
+        if(pthread_rwlock_unlock(&(fs->hashtable[ix2]->rwBstLock))){
+            exit(EXIT_FAILURE);
+        }
+    }
+    else if (flagTrylockTwo == 0){
+        if(pthread_rwlock_unlock(&(fs->hashtable[ix1]->rwBstLock))){
+            exit(EXIT_FAILURE);
+        }
+    }
+    
+}
+
+int renameFile(tecnicofs *fs, char *name, char* nameAux, uid_t user){
     int flagTrylockOne = 0, flagTrylockTwo = 0; /* as flags servem para indicar os locks efetuados */ 
     int iNumberAux = 0;
     int ix1 = 0, ix2 = 0;
+    node *nodeAux;
+    uid_t owner;
 
     ix1 = hash(name, fs->numBst);
     ix2 = hash(nameAux, fs->numBst);
 
     struct timespec tim, tim2;
     tim.tv_sec = 0;
-    while ((lookup(fs, name) != 0) && (lookup(fs, nameAux) == 0)){
+    while(1){
         int numAttempts = 0;
         if (pthread_rwlock_trywrlock(&(fs->hashtable[ix1]->rwBstLock)) == 0){
             if ((ix1 != ix2) && (pthread_rwlock_trywrlock(&(fs->hashtable[ix2]->rwBstLock)) == 0)){
@@ -194,27 +213,77 @@ void renameFile(tecnicofs *fs, char *name, char* nameAux){
         if(nanosleep(&tim, &tim2) < 0){
             exit(EXIT_FAILURE);
         }    
-    }    
-    if ((flagTrylockOne != 0) || (flagTrylockTwo != 0)){
-        node *nodeAux;
+    }
 
-        nodeAux = search(fs->hashtable[ix1]->bstRoot, name);
-        iNumberAux = nodeAux->inumber;
+    nodeAux = search(fs->hashtable[ix1]->bstRoot, name);
+    iNumberAux = nodeAux->inumber;
+
+    if((inode_get(iNumberAux, &owner, NULL, NULL , NULL, 0)) == -1){
+        renameUnlock(fs, flagTrylockOne, flagTrylockTwo, ix1, ix2);
+        return TECNICOFS_ERROR_OTHER;
+    }
+
+    if (owner != user){
+        renameUnlock(fs, flagTrylockOne, flagTrylockTwo, ix1, ix2);
+        return TECNICOFS_ERROR_PERMISSION_DENIED;
+    }
+
+    if ((search(fs->hashtable[ix1]->bstRoot, name) == NULL)){
+        renameUnlock(fs, flagTrylockOne, flagTrylockTwo, ix1, ix2);
+        return TECNICOFS_ERROR_FILE_NOT_FOUND;
+    }
+
+    if(search(fs->hashtable[ix2]->bstRoot, nameAux) != NULL){
+        renameUnlock(fs, flagTrylockOne, flagTrylockTwo, ix1, ix2);
+        return TECNICOFS_ERROR_FILE_ALREADY_EXISTS;
+    }
+
+    if ((flagTrylockOne != 0) || (flagTrylockTwo != 0)){
         fs->hashtable[ix1]->bstRoot = remove_item(fs->hashtable[ix1]->bstRoot, name);
         fs->hashtable[ix2]->bstRoot = insert(fs->hashtable[ix2]->bstRoot, nameAux, iNumberAux);
-        if (flagTrylockOne == 0){
-            if(pthread_rwlock_unlock(&(fs->hashtable[ix1]->rwBstLock))){
-                exit(EXIT_FAILURE);
-            }
-            if(pthread_rwlock_unlock(&(fs->hashtable[ix2]->rwBstLock))){
-                exit(EXIT_FAILURE);
-            }
-        }
-        else if (flagTrylockTwo == 0){
-            if(pthread_rwlock_unlock(&(fs->hashtable[ix1]->rwBstLock))){
-                exit(EXIT_FAILURE);
-            }
-        }
+        renameUnlock(fs, flagTrylockOne, flagTrylockTwo, ix1, ix2);
     }
+
+    return SUCCESS;
 }
 
+int writeToFile(tecnicofs *fs, openfileLink *tabFichAbertos, int index, char* content){
+    int inumber;
+    
+    if (tabFichAbertos[index] == NULL){
+        return TECNICOFS_ERROR_FILE_NOT_OPEN;
+    }
+    
+    if (tabFichAbertos[index]->mode == READ){
+        return TECNICOFS_ERROR_INVALID_MODE;
+    }
+
+    inumber = lookup(fs, tabFichAbertos[index]->filename);
+
+    if (inode_set(inumber, content, strlen(content)) == -1){
+        return TECNICOFS_ERROR_OTHER;
+    }
+
+    return SUCCESS;
+}
+
+int readFromFile(tecnicofs *fs, openfileLink *tabFichAbertos, int index, char *buffer, int len){
+    int inumber, size;
+
+    if (tabFichAbertos[index] == NULL){
+        return TECNICOFS_ERROR_FILE_NOT_OPEN;
+    }
+
+    if (tabFichAbertos[index]->mode == WRITE){
+        return TECNICOFS_ERROR_INVALID_MODE;
+    }
+
+    inumber = lookup(fs, tabFichAbertos[index]->filename);
+
+    if((size = inode_get(inumber, NULL, NULL, NULL, buffer, len - 1)) == -1){
+        return TECNICOFS_ERROR_OTHER;
+    }
+
+    return size;
+
+}
