@@ -1,8 +1,7 @@
 /* Projeto SO - 
     grupo 1 : Vitor Vale  e Tomas Saraiva */
    
-/* proteger numThreads com mutex */
-/* fazer validacao nos mallocs, ie verificar retorno */
+/* ver validacao necessaria para o write e o read */
 #define _GNU_SOURCE
 
 #include <stdio.h>
@@ -199,7 +198,15 @@ void applyCommands(uid_t owner, char* command, openfileLink *tabFichAbertos, int
                 }
                 else{
                     openfileLink file = (openfileLink) malloc(sizeof(openfile_t));
+                    if (!file) {
+		                perror("failed to allocate openfile\n");
+		                exit(EXIT_FAILURE);
+	                }
                     file->filename = (char*) malloc(strlen(arg1));
+                    if (!(file->filename)) {
+		                perror("failed to allocate string\n");
+		                exit(EXIT_FAILURE);
+	                }
                     strcpy(file->filename, arg1);
                     file->mode = atoi(arg2);
 
@@ -218,11 +225,11 @@ void applyCommands(uid_t owner, char* command, openfileLink *tabFichAbertos, int
                     free(tabFichAbertos[atoi(arg1)]);
                     tabFichAbertos[atoi(arg1)] = NULL;
 					sprintf(buffer, "%d", SUCCESS);
-        			write(cli, buffer, BUFF_RESP_SIZE);                
+        			write(cli, buffer, BUFF_RESP_SIZE);               
         		}
                 else{
 					sprintf(buffer, "%d", TECNICOFS_ERROR_FILE_NOT_OPEN);
-        			write(cli, buffer, BUFF_RESP_SIZE);                
+        			write(cli, buffer, BUFF_RESP_SIZE);             
         		}      
                 }
                 break;
@@ -268,14 +275,20 @@ void *trataCliente(void *arg){
     int *cli = (int*) arg;
     int clifd;
     char buff[BUFF_SIZE];
-    openfileLink *tabFichAbertos = (openfileLink*) malloc(sizeof(openfileLink) * TABELA_FA_SIZE);
     struct ucred ucred;
     int ulen;
+    openfileLink *tabFichAbertos = (openfileLink*) malloc(sizeof(openfileLink) * TABELA_FA_SIZE);
     
+    if(!tabFichAbertos){
+        perror("failed to allocate tabFichAbertos\n");
+		exit(EXIT_FAILURE);
+    }
     memset(buff, 0, sizeof(char));
 
     clifd = *cli;
-    sem_post(&clientfd);
+    if (sem_post(&clientfd) == -1){
+        exit(EXIT_FAILURE);
+    }
     
     ulen = sizeof(struct ucred);
     if (getsockopt(clifd, SOL_SOCKET, SO_PEERCRED, &ucred, (socklen_t *) &ulen) == -1){
@@ -311,7 +324,9 @@ void criaThread(int cli){
     if (pthread_rwlock_unlock(&numThreadsLock) != 0){
         exit(EXIT_FAILURE);
     }
-    sem_wait(&clientfd);
+    if(sem_wait(&clientfd) == -1){
+        exit(EXIT_FAILURE);
+    }
 }
 
 void rotinaTratamentoSignal(){
@@ -322,7 +337,7 @@ void rotinaTratamentoSignal(){
 int main(int argc, char* argv[]) {
     time_t t;
     struct sockaddr_un server_addr;
-    int cli, ulen, i, numThreadsAux;
+    int cli, ulen, i;
     struct ucred ucred;
     sigset_t signal_mask;
     FILE *fout;
@@ -355,14 +370,24 @@ int main(int argc, char* argv[]) {
     }
 
     tid = (pthread_t *) malloc(sizeof(pthread_t));
+    if (!tid){
+        perror("failed to allocate tid\n");
+		exit(EXIT_FAILURE);
+    }
     tabSessoes = (int *) malloc(sizeof(int));
+    if (!tabSessoes){
+        perror("failed to allocate tabSessoes\n");
+		exit(EXIT_FAILURE);
+    }
 
     if((sockfd = socket(AF_UNIX, SOCK_STREAM, 0)) == -1){
         fprintf(stderr, "Error: Failed to create the socket. \n");
         exit(EXIT_FAILURE);
     }
 
-    unlink(socketName);
+    if(unlink(socketName) == -1){
+        exit(EXIT_FAILURE);
+    }
     memset(&server_addr, 0, sizeof(server_addr));
 
     server_addr.sun_family = AF_UNIX; 
@@ -378,14 +403,20 @@ int main(int argc, char* argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    sigemptyset (&signal_mask);
-    sigaddset(&signal_mask, SIGINT);
+    if(sigemptyset (&signal_mask) == -1){
+        exit(EXIT_FAILURE);
+    }
+    if(sigaddset(&signal_mask, SIGINT) == -1){
+        exit(EXIT_FAILURE);
+    }
 
     terminateAction.sa_mask = signal_mask;
     terminateAction.sa_flags = 0;
     terminateAction.sa_handler = rotinaTratamentoSignal;
 
-    sigaction(SIGINT, &terminateAction, NULL);
+    if(sigaction(SIGINT, &terminateAction, NULL) == -1){
+        exit(EXIT_FAILURE);
+    }
 
     gettimeofday(&begin, NULL);
 
@@ -441,7 +472,9 @@ int main(int argc, char* argv[]) {
     }
 
     for (i = 0; i < numThreadsOnSignal; i++){
-        pthread_join(tid[i], NULL);
+        if(pthread_join(tid[i], NULL) != 0){
+            exit(EXIT_FAILURE);
+        }
     }
 
     gettimeofday(&end, NULL);
@@ -454,7 +487,9 @@ int main(int argc, char* argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    unlink(socketName);
+    if(unlink(socketName) == -1){
+        exit(EXIT_FAILURE);
+    }
     if(close(sockfd) == -1){
         fprintf(stderr, "Error: Failed to get client credentials. \n");
         exit(EXIT_FAILURE);
