@@ -25,9 +25,17 @@ tecnicofs* new_tecnicofs(int numberBuckets){
     fs->numBst = numberBuckets;
     inode_table_init(); 
     fs->hashtable = (bstLink) malloc(sizeof(Bst*)*numberBuckets);
+    if (!fs->hashtable) {
+        perror("failed to allocate hashtable");
+        exit(EXIT_FAILURE);
+    }
 
     for (i = 0; i < fs->numBst; i++){
         fs->hashtable[i] = (Bst*) malloc(sizeof(Bst));
+        if (!fs->hashtable[i]) {
+            perror("failed to allocate hashtable index");
+            exit(EXIT_FAILURE);
+        }
         fs->hashtable[i]->bstRoot = NULL;
         if(pthread_rwlock_init(&(fs->hashtable[i]->rwBstLock), NULL) != 0){
             exit(EXIT_FAILURE);
@@ -228,7 +236,7 @@ int renameFile(tecnicofs *fs, char *name, char* nameAux, uid_t user){
         return TECNICOFS_ERROR_PERMISSION_DENIED;
     }
 
-    if ((search(fs->hashtable[ix1]->bstRoot, name) == NULL)){
+    if (search(fs->hashtable[ix1]->bstRoot, name) == NULL){
         renameUnlock(fs, flagTrylockOne, flagTrylockTwo, ix1, ix2);
         return TECNICOFS_ERROR_FILE_NOT_FOUND;
     }
@@ -285,5 +293,4 @@ int readFromFile(tecnicofs *fs, openfileLink *tabFichAbertos, int index, char *b
     }
 
     return size;
-
 }

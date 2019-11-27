@@ -6,7 +6,11 @@
 #include <sys/socket.h> 
 #include <sys/un.h> 
 
+#define TRUE 1;
+#define FALSE 0;
+
 int sockfd = -1;
+int activeConnection = FALSE;
 
 int createSocket(){
 
@@ -24,21 +28,10 @@ int createSocket(){
 int commandResponse(char* command){
 	char command_resp[4];
 
-	write(sockfd, command, strlen(command)+1);
-	read(sockfd, command_resp, 4);
-
-	/*if(atoi(command_resp[0]) == 0){
-		return 0;
-	}
-	else{
-		int d1 = atoi(command_resp[0]), d2, err;
-
-		if(command_resp[1] != '\0'){
-			d2 = atoi(command_resp[1]);
-		}
-		err = d1*10 + d2;
-		return err;
-	}*/
+	if(write(sockfd, command, strlen(command)+1) == -1)
+		return TECNICOFS_ERROR_OTHER;
+	if(read(sockfd, command_resp, 4) == -1)
+		return TECNICOFS_ERROR_OTHER;
 
 	return atoi(command_resp);
 }
@@ -71,11 +64,15 @@ int tfsMount(char* address){
         return TECNICOFS_ERROR_CONNECTION_ERROR;
     }
 
-    read(sockfd, mount_resp, 4);
+    if(read(sockfd, mount_resp, 4) == -1){
+    	return TECNICOFS_ERROR_OTHER;
+    }
+    
     if(!strcmp("yes", mount_resp)){
     	return TECNICOFS_ERROR_OPEN_SESSION;
     }
 
+    activeConnection = TRUE;
     return 0;
 }
 
@@ -86,15 +83,20 @@ int tfsUnmount(){
 		return TECNICOFS_ERROR_NO_OPEN_SESSION;
 	}
 
-	write(sockfd, "s\0", 2);
-	read(sockfd, unmount_resp, 8);
+	if(write(sockfd, "s\0", 2) == -1)
+		return TECNICOFS_ERROR_OTHER;
+	if(read(sockfd, unmount_resp, 8) == -1)
+		return TECNICOFS_ERROR_OTHER;
 
 	if(!strcmp("failure", unmount_resp)){
 		return TECNICOFS_ERROR_OTHER;
 	}
 
-	close(sockfd);
-
+	if(close(sockfd) == -1){
+		return TECNICOFS_ERROR_OTHER;
+	}
+	
+	activeConnection = FALSE;
 	return 0;
 }
 
@@ -102,6 +104,9 @@ int tfsCreate(char *filename, permission ownerPermissions, permission othersPerm
 	char ownperm, otherperm;
 	char command[100];
 	char *end = *(&command);
+
+	if(activeConnection == FALSE)
+		return TECNICOFS_ERROR_CONNECTION_ERROR;
 
 	command[0] = 'c';
 	command[1] = ' ';
@@ -138,6 +143,9 @@ int tfsCreate(char *filename, permission ownerPermissions, permission othersPerm
 int tfsDelete(char* filename){
 	char command[100];
 
+	if(activeConnection == FALSE)
+		return TECNICOFS_ERROR_CONNECTION_ERROR;
+
 	command[0] = 'd';
 	command[1] = ' ';
 	strcpy(&command[2], filename);
@@ -148,6 +156,9 @@ int tfsDelete(char* filename){
 int tfsRename(char *filenameOld, char *filenameNew){
 	char command[100];
 	char *end = *(&command);
+
+	if(activeConnection == FALSE)
+		return TECNICOFS_ERROR_CONNECTION_ERROR;
 
 	command[0] = 'r';
 	command[1] = ' ';
@@ -164,6 +175,9 @@ int tfsRename(char *filenameOld, char *filenameNew){
 int tfsOpen(char *filename, permission mode){
 	char command[100];
 	char *end = *(&command);
+
+	if(activeConnection == FALSE)
+		return TECNICOFS_ERROR_CONNECTION_ERROR;
 
 	command[0] = 'o';
 	command[1] = ' ';
@@ -190,6 +204,9 @@ int tfsClose(int fd){
 	char sfd[2];
 	char command[4] = {'x', ' ', 0, '\0'};
 
+	if(activeConnection == FALSE)
+		return TECNICOFS_ERROR_CONNECTION_ERROR;
+
 	sprintf(sfd, "%d", fd); 
 	command[2] = sfd[0];
 
@@ -200,22 +217,26 @@ int tfsRead(int fd, char *buffer, int len){
 	char sfd[2], slen[numberOfDigits(len)+1], respBuffer[len+2];
 	char command[100] ={'l', ' ', 0, ' '};
 
+	if(activeConnection == FALSE)
+		return TECNICOFS_ERROR_CONNECTION_ERROR;
+
 	sprintf(sfd, "%d", fd);
 	sprintf(slen, "%d", len);
 
 	command[2] = sfd[0];
 	strcpy(&command[4], slen);
 
-	write(sockfd, command, strlen(command) + 1);
-	read(sockfd, respBuffer, len+2);
+	if(write(sockfd, command, strlen(command) + 1) == -1)
+		return TECNICOFS_ERROR_OTHER;
+	if(read(sockfd, respBuffer, len+2) == -1)
+		return TECNICOFS_ERROR_OTHER;
 
 	if(respBuffer[1] == ' '){
 		strcpy(buffer, &respBuffer[2]);
 		return strlen(buffer);
 	} 
 	else{
-		int err = atoi(respBuffer);
-		return err;
+		return atoi(respBuffer);
 	}
 }
 
@@ -225,6 +246,7 @@ int tfsWrite(int fd, char *buffer, int len){
 	int i;
 
 	sprintf(sfd, "%d", fd);
+	
 	for(i = 0; i < len; i++){
 		dataInBuffer[i] = buffer[i];
 		if(buffer[i] == '\0')
