@@ -26,11 +26,13 @@
 #define FD_NULL -1
 #define UID_NULL -1
 #define BUFF_RESP_SIZE 3
+#define MAX_CLIENTS 250
+#define MAX_OPEN_FICH_GLOBAL 5 * MAX_CLIENTS
 
 
 long numberBuckets = 0;
 int tidTableSize = 0, tabSessoesSize = 0, numSessoes = 0, 
-numThreads = 0, sockfd, signalActivated = 0, numThreadsOnSignal;
+numThreads = 0, sockfd, signalActivated = 0, numThreadsOnSignal, numOpenFiles = 0;
 pthread_t* tid;
 struct timeval begin, end;
 tecnicofs* fs;
@@ -39,6 +41,7 @@ int *tabSessoes;
 sem_t clientfd;
 pthread_rwlock_t tabSessoesLock;
 pthread_rwlock_t numThreadsLock;
+openfileLink globalOpenFileTab[MAX_OPEN_FICH_GLOBAL];
 
 static void displayUsage (const char* appName){
     printf("Usage: %s\n", appName);
@@ -111,6 +114,36 @@ void terminateSession(int cli){
             exit(EXIT_FAILURE);
         }
     }
+}
+
+int openFile(openfileLink *tabFichAbertos, char *arg1, char *arg2){
+    int i = 0, searchResult;
+
+    searchResult = lookup(fs, arg1);
+    if(searchResult == -1){
+        return TECNICOFS_ERROR_FILE_NOT_FOUND;
+    }
+    else{
+        openfileLink file = (openfileLink) malloc(sizeof(openfile_t));
+        if (!file) {
+		    perror("failed to allocate openfile\n");
+		    exit(EXIT_FAILURE);
+	    }
+        file->filename = (char*) malloc(strlen(arg1));
+        if (!(file->filename)) {
+		    perror("failed to allocate string\n");
+		    exit(EXIT_FAILURE);
+	    }
+        strcpy(file->filename, arg1);
+        file->mode = atoi(arg2);
+
+        while (tabFichAbertos[i] != NULL) i++;
+                    
+        tabFichAbertos[i] = file;
+        globalOpenFileTab[numOpenFiles++] = file;
+
+        return SUCCESS;
+    }    
 }
 
 /* falta fazer um comando para terminar uma sessao */
@@ -190,37 +223,20 @@ void applyCommands(uid_t owner, char* command, openfileLink *tabFichAbertos, int
                 break;
             case 'o':
                 {
-                int i = 0;
-                searchResult = lookup(fs, arg1);
-                if(searchResult == -1){
-                	sprintf(buffer, "%d", TECNICOFS_ERROR_FILE_NOT_FOUND);
-                    write(cli, buffer, BUFF_RESP_SIZE);
-                }
-                else{
-                    openfileLink file = (openfileLink) malloc(sizeof(openfile_t));
-                    if (!file) {
-		                perror("failed to allocate openfile\n");
-		                exit(EXIT_FAILURE);
-	                }
-                    file->filename = (char*) malloc(strlen(arg1));
-                    if (!(file->filename)) {
-		                perror("failed to allocate string\n");
-		                exit(EXIT_FAILURE);
-	                }
-                    strcpy(file->filename, arg1);
-                    file->mode = atoi(arg2);
-
-                    while (tabFichAbertos[i] != NULL) i++;
-                    
-                    tabFichAbertos[i] = file;
-                    sprintf(buffer, "%d", i);
-                    write(cli, buffer, BUFF_RESP_SIZE);
-                }
+                int ores = openFile(tabFichAbertos, arg1, arg2);
+                sprintf(buffer, "%d", i);
+                write(cli, buffer, BUFF_RESP_SIZE);
                 }
                 break;
             case 'x':
                 {
                 if (tabFichAbertos[atoi(arg1)] != NULL){
+                    for(int i = 0; i < numOpenFiles; i++){
+                        if (strcmp(globalOpenFileTab[i]->filename, tabFichAbertos[atoi(arg1)]->filename) == 0){
+                            globalOpenFileTab[i] = NULL;
+                            break;
+                        }
+                    }
                     free(tabFichAbertos[atoi(arg1)]->filename);
                     free(tabFichAbertos[atoi(arg1)]);
                     tabFichAbertos[atoi(arg1)] = NULL;
@@ -256,6 +272,12 @@ void applyCommands(uid_t owner, char* command, openfileLink *tabFichAbertos, int
                 }
                 for(int i = 0; i < TABELA_FA_SIZE; i++){
                     if(tabFichAbertos[i] != NULL){
+                        for(int k = 0; k < numOpenFiles; k++){
+                            if (strcmp(globalOpenFileTab[k]->filename, tabFichAbertos[i]->filename) == 0){
+                                globalOpenFileTab[k] = NULL;
+                                break;
+                            }
+                        }
                         free(tabFichAbertos[i]->filename);
                         free(tabFichAbertos[i]);
                     }
