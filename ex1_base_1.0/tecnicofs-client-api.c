@@ -245,6 +245,9 @@ int tfsWrite(int fd, char *buffer, int len){
 	char command[100] ={'w', ' ', 0, ' '};
 	int i;
 
+	if(activeConnection == FALSE)
+			return TECNICOFS_ERROR_CONNECTION_ERROR;
+
 	sprintf(sfd, "%d", fd);
 	
 	for(i = 0; i < len; i++){
