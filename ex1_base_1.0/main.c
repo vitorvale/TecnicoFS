@@ -271,6 +271,22 @@ void *trataCliente(void *arg){
     struct ucred ucred;
     int ulen;
     openfileLink *tabFichAbertos = (openfileLink*) malloc(sizeof(openfileLink) * TABELA_FA_SIZE);
+    sigset_t signal_mask;
+
+    if(sigemptyset(&signal_mask) == -1){
+        fprintf(stderr, "Error: sigemptyset. \n");
+        exit(EXIT_FAILURE);
+    }
+
+    if(sigaddset(&signal_mask, SIGINT) == -1){
+        fprintf(stderr, "Error: sigaddset. \n");
+        exit(EXIT_FAILURE);
+    }
+
+    if(pthread_sigmask(SIG_BLOCK, &signal_mask, NULL) != 0){
+        fprintf(stderr, "Error: pthread_sigmask. \n");
+        exit(EXIT_FAILURE);
+    }
     
     if(!tabFichAbertos){
         perror("failed to allocate tabFichAbertos\n");
@@ -335,7 +351,6 @@ int main(int argc, char* argv[]) {
     struct sockaddr_un server_addr;
     int cli, ulen, i;
     struct ucred ucred;
-    sigset_t signal_mask;
     FILE *fout;
     struct sigaction terminateAction;
     char socketName[SOCK_SIZE];
@@ -403,27 +418,16 @@ int main(int argc, char* argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    if(sigemptyset(&signal_mask) == -1){
+    if(sigemptyset(&terminateAction.sa_mask) == -1){
         fprintf(stderr, "Error: sigemptyset. \n");
         exit(EXIT_FAILURE);
     }
 
-    terminateAction.sa_mask = signal_mask;
     terminateAction.sa_flags = 0;
     terminateAction.sa_handler = rotinaTratamentoSignal;
 
     if(sigaction(SIGINT, &terminateAction, NULL) == -1){
         fprintf(stderr, "Error: sigaction. \n");
-        exit(EXIT_FAILURE);
-    }
-
-    if(sigaddset(&signal_mask, SIGINT) == -1){
-        fprintf(stderr, "Error: sigaddset. \n");
-        exit(EXIT_FAILURE);
-    }
-
-    if(pthread_sigmask(SIG_BLOCK, &signal_mask, NULL) != 0){
-        fprintf(stderr, "Error: pthread_sigmask. \n");
         exit(EXIT_FAILURE);
     }
 
@@ -470,16 +474,19 @@ int main(int argc, char* argv[]) {
                 tabSessoes = (int *) realloc(tabSessoes, sizeof(int*)*(++tabSessoesSize));
             tabSessoes[numSessoes++] = ucred.uid;
             sprintf(buffer, "%d", SUCCESS);
-            if(write(cli, buffer, BUFF_RESP_SIZE) == -1)
+            if(write(cli, buffer, BUFF_RESP_SIZE) == -1){
                 closeClientConnection(cli);
+            }
             if (pthread_rwlock_unlock(&tabSessoesLock) != 0){
                 exit(EXIT_FAILURE);
             }
         }
         else{
             sprintf(buffer, "%d", TECNICOFS_ERROR_OPEN_SESSION);
-            if(write(cli, buffer, BUFF_RESP_SIZE) == -1)
+            if(write(cli, buffer, BUFF_RESP_SIZE) == -1){
                 closeClientConnection(cli);       
+            }
+        
         }
 
         criaThread(cli);
