@@ -408,17 +408,22 @@ int main(int argc, char* argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    if(sigaddset(&signal_mask, SIGINT) == -1){
-        fprintf(stderr, "Error: sigaddset. \n");
-        exit(EXIT_FAILURE);
-    }
-
     terminateAction.sa_mask = signal_mask;
     terminateAction.sa_flags = 0;
     terminateAction.sa_handler = rotinaTratamentoSignal;
 
     if(sigaction(SIGINT, &terminateAction, NULL) == -1){
         fprintf(stderr, "Error: sigaction. \n");
+        exit(EXIT_FAILURE);
+    }
+
+    if(sigaddset(&signal_mask, SIGINT) == -1){
+        fprintf(stderr, "Error: sigaddset. \n");
+        exit(EXIT_FAILURE);
+    }
+
+    if(pthread_sigmask(SIG_BLOCK, &signal_mask, NULL) != 0){
+        fprintf(stderr, "Error: pthread_sigmask. \n");
         exit(EXIT_FAILURE);
     }
 
