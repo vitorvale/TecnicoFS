@@ -35,7 +35,7 @@ int create(tecnicofs* fs, char *name, char* permissions, uid_t owner);
 int delete(tecnicofs* fs, char *name, uid_t userid, openfileLink *tabFichAbertos);
 int lookup(tecnicofs* fs, char *name);
 void print_tecnicofs_trees(FILE * fp, tecnicofs *fs);
-int renameFile(tecnicofs *fs, char *name, char* nameAux, uid_t user);
+int renameFile(tecnicofs *fs, char *name, char* nameAux, uid_t user, openfileLink *tabFichAbertos);
 void renameUnlock(tecnicofs *fs,int flagTrylockOne, int flagTrylockTwo, int ix1, int ix2);
 int openFile(tecnicofs *fs, openfileLink *tabFichAbertos, char *filename, permission mode, uid_t user);
 int closeFile(tecnicofs *fs, openfileLink *tabFichAbertos, int fd);

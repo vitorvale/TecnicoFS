@@ -184,7 +184,7 @@ void renameUnlock(tecnicofs *fs,int flagTrylockOne, int flagTrylockTwo, int ix1,
     
 }
 
-int renameFile(tecnicofs *fs, char *name, char* nameAux, uid_t user){
+int renameFile(tecnicofs *fs, char *name, char* nameAux, uid_t user, openfileLink *tabFichAbertos){
     int flagTrylockOne = 0, flagTrylockTwo = 0; /* as flags servem para indicar os locks efetuados */ 
     int iNumberAux = 0;
     int ix1 = 0, ix2 = 0;
@@ -245,6 +245,13 @@ int renameFile(tecnicofs *fs, char *name, char* nameAux, uid_t user){
         renameUnlock(fs, flagTrylockOne, flagTrylockTwo, ix1, ix2);
         return TECNICOFS_ERROR_FILE_ALREADY_EXISTS;
     }
+    
+    for(int i = 0; i < TABELA_FA_SIZE; i++){
+        if((tabFichAbertos[i] != NULL) && (!strcmp(tabFichAbertos[i]->filename, name))){
+            renameUnlock(fs, flagTrylockOne, flagTrylockTwo, ix1, ix2);
+            return TECNICOFS_ERROR_FILE_IS_OPEN;
+        }
+    }
 
     if ((flagTrylockOne != 0) || (flagTrylockTwo != 0)){
         fs->hashtable[ix1]->bstRoot = remove_item(fs->hashtable[ix1]->bstRoot, name);
@@ -282,7 +289,7 @@ int openFile(tecnicofs *fs, openfileLink *tabFichAbertos, char *filename, permis
             perror("failed to allocate openfile\n");
             exit(EXIT_FAILURE);
         }
-        file->filename = (char*) malloc(strlen(filename));
+        file->filename = (char*) malloc(sizeof(char)*strlen(filename));
         if (!(file->filename)) {
             perror("failed to allocate string\n");
             exit(EXIT_FAILURE);

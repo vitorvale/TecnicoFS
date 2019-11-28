@@ -85,7 +85,6 @@ int terminateSession(int cli, openfileLink *tabFichAbertos){
             free(tabFichAbertos[i]);
         }
     }
-    free(tabFichAbertos);
 
     if (pthread_rwlock_rdlock(&tabSessoesLock) != 0){
         exit(EXIT_FAILURE);
@@ -128,7 +127,7 @@ void closeClientConnection(int cli){
     if (pthread_rwlock_unlock(&numThreadsLock) != 0){
         exit(EXIT_FAILURE);
     }
-    exit(0);
+    pthread_exit(NULL);
 }
 
 void applyCommand(uid_t user, char* command, openfileLink *tabFichAbertos, int cli){
@@ -210,7 +209,7 @@ void applyCommand(uid_t user, char* command, openfileLink *tabFichAbertos, int c
         break;
         case 'r':
         {
-            int renamRes = renameFile(fs, arg1, arg2, user);
+            int renamRes = renameFile(fs, arg1, arg2, user, tabFichAbertos);
             sprintf(buffer, "%d", renamRes);
             if(write(cli, buffer, BUFF_RESP_SIZE) == -1) {
                 terminateSession(cli, tabFichAbertos);
@@ -270,7 +269,7 @@ void *trataCliente(void *arg){
     char buff[BUFF_SIZE];
     struct ucred ucred;
     int ulen;
-    openfileLink *tabFichAbertos = (openfileLink*) malloc(sizeof(openfileLink) * TABELA_FA_SIZE);
+    openfileLink tabFichAbertos[TABELA_FA_SIZE] = {NULL};
     sigset_t signal_mask;
 
     if(sigemptyset(&signal_mask) == -1){
@@ -288,10 +287,6 @@ void *trataCliente(void *arg){
         exit(EXIT_FAILURE);
     }
     
-    if(!tabFichAbertos){
-        perror("failed to allocate tabFichAbertos\n");
-		exit(EXIT_FAILURE);
-    }
     memset(buff, 0, sizeof(char));
 
     clifd = *cli;
