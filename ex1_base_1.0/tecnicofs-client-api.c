@@ -84,11 +84,11 @@ int tfsUnmount(){
 	}
 
 	if(write(sockfd, "s\0", 2) == -1)
-		return TECNICOFS_ERROR_OTHER;
+		return TECNICOFS_ERROR_NO_OPEN_SESSION;
 	if(read(sockfd, unmount_resp, 8) == -1)
-		return TECNICOFS_ERROR_OTHER;
+		return TECNICOFS_ERROR_CONNECTION_ERROR;
 
-	if(!strcmp("failure", unmount_resp)){
+	if(atoi(unmount_resp) != SUCCESS){
 		return TECNICOFS_ERROR_OTHER;
 	}
 
@@ -97,7 +97,7 @@ int tfsUnmount(){
 	}
 	
 	activeConnection = FALSE;
-	return 0;
+	return SUCCESS;
 }
 
 int tfsCreate(char *filename, permission ownerPermissions, permission othersPermissions){
