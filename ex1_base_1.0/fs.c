@@ -255,6 +255,61 @@ int renameFile(tecnicofs *fs, char *name, char* nameAux, uid_t user){
     return SUCCESS;
 }
 
+int openFile(tecnicofs *fs, openfileLink *tabFichAbertos, char *filename, permission mode, uid_t user){
+    int i = 0, searchResult;
+
+    searchResult = lookup(fs, filename);
+    if(searchResult == -1){
+        return TECNICOFS_ERROR_FILE_NOT_FOUND;
+    }
+    else{
+        uid_t owner;
+        permission ownerPermissions, othersPermissions;
+
+        if(inode_get(searchResult, &owner, &ownerPermissions, &othersPermissions, NULL, 0) == -1)
+            return TECNICOFS_ERROR_OTHER;
+
+        if(user != owner){
+            if((othersPermissions == READ) && (mode == WRITE))
+                return TECNICOFS_ERROR_INVALID_MODE;
+
+            else if((othersPermissions == WRITE) && (mode == READ))
+                return TECNICOFS_ERROR_INVALID_MODE;
+        }
+
+        openfileLink file = (openfileLink) malloc(sizeof(openfile_t));
+        if (!file) {
+            perror("failed to allocate openfile\n");
+            exit(EXIT_FAILURE);
+        }
+        file->filename = (char*) malloc(strlen(filename));
+        if (!(file->filename)) {
+            perror("failed to allocate string\n");
+            exit(EXIT_FAILURE);
+        }
+        strcpy(file->filename, filename);
+        file->mode = mode;
+
+        while (tabFichAbertos[i] != NULL) i++;
+
+        tabFichAbertos[i] = file;
+
+        return SUCCESS;            
+    }    
+}
+
+int closeFile(tecnicofs *fs, openfileLink *tabFichAbertos, int fd){
+    if (tabFichAbertos[fd] != NULL){
+        free(tabFichAbertos[fd]->filename);
+        free(tabFichAbertos[fd]);
+        tabFichAbertos[fd] = NULL;
+        return SUCCESS;
+    }
+    else{
+        return TECNICOFS_ERROR_FILE_NOT_OPEN;
+    }
+}
+
 int writeToFile(tecnicofs *fs, openfileLink *tabFichAbertos, int index, char* content){
     int inumber;
     

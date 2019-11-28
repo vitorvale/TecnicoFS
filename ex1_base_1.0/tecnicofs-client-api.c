@@ -6,8 +6,8 @@
 #include <sys/socket.h> 
 #include <sys/un.h> 
 
-#define TRUE 1;
-#define FALSE 0;
+#define TRUE 1
+#define FALSE 0
 
 int sockfd = -1;
 int activeConnection = FALSE;
@@ -60,7 +60,7 @@ int tfsMount(char* address){
     server_addr.sun_family = AF_UNIX;
     strncpy(server_addr.sun_path, address, sizeof(server_addr.sun_path) - 1);
 
-    if((connect(sockfd, (struct sockaddr *) &server_addr,sizeof(struct sockaddr_un))) == -1){
+    if((connect(sockfd, (struct sockaddr *) &server_addr, sizeof(struct sockaddr_un))) == -1){
         return TECNICOFS_ERROR_CONNECTION_ERROR;
     }
 
@@ -68,12 +68,12 @@ int tfsMount(char* address){
     	return TECNICOFS_ERROR_OTHER;
     }
     
-    if(!strcmp("yes", mount_resp)){
-    	return TECNICOFS_ERROR_OPEN_SESSION;
+    if(atoi(mount_resp) != SUCCESS){
+    	return atoi(mount_resp);
     }
 
     activeConnection = TRUE;
-    return 0;
+    return SUCCESS;
 }
 
 int tfsUnmount(){

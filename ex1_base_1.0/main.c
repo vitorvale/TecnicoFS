@@ -11,6 +11,7 @@
 #include <ctype.h>
 #include <sys/time.h>
 #include <pthread.h>
+#include <errno.h>
 #include <stdlib.h>
 #include <time.h>
 #include <semaphore.h>
@@ -20,15 +21,13 @@
 #include "fs.h"
 #include "lib/hash.h"
 
+#define SOCK_SIZE 100
 #define MAX_COMMANDS 10
 #define MAX_INPUT_SIZE 100
 #define BUFF_SIZE 1024
 #define FD_NULL -1
 #define UID_NULL -1
 #define BUFF_RESP_SIZE 3
-#define MAX_CLIENTS 250
-#define MAX_OPEN_FICH_GLOBAL 5 * MAX_CLIENTS
-
 
 long numberBuckets = 0;
 int tidTableSize = 0, tabSessoesSize = 0, numSessoes = 0, 
@@ -36,12 +35,10 @@ numThreads = 0, sockfd, signalActivated = 0, numThreadsOnSignal, numOpenFiles = 
 pthread_t* tid;
 struct timeval begin, end;
 tecnicofs* fs;
-char *socketName;
 int *tabSessoes;
 sem_t clientfd;
 pthread_rwlock_t tabSessoesLock;
 pthread_rwlock_t numThreadsLock;
-openfileLink globalOpenFileTab[MAX_OPEN_FICH_GLOBAL];
 
 static void displayUsage (const char* appName){
     printf("Usage: %s\n", appName);
@@ -54,8 +51,6 @@ static void parseArgs (long argc, char* const argv[]){
         displayUsage(argv[0]);
     }
     numberBuckets = strtol(argv[3], NULL, 10);
-    socketName = *(&argv[1]);
-
 }
 
 void errorParse(){
@@ -116,181 +111,128 @@ void terminateSession(int cli){
     }
 }
 
-int openFile(openfileLink *tabFichAbertos, char *arg1, char *arg2){
-    int i = 0, searchResult;
+void applyCommands(uid_t user, char* command, openfileLink *tabFichAbertos, int cli){
+    char token;
+    char arg1[MAX_INPUT_SIZE];
+    char arg2[MAX_INPUT_SIZE];
+    char buffer[BUFF_RESP_SIZE];
+    /* verificacao do token */
+    int numTokens = sscanf(command, "%c", &token);
 
-    searchResult = lookup(fs, arg1);
-    if(searchResult == -1){
-        return TECNICOFS_ERROR_FILE_NOT_FOUND;
+    /*SE O COMANDO TIVER ARGS A MAIS NAO VERIFICA!!!!!!!!*/
+
+    /* tratamento do resto do comando em funcao do token,
+       subtraimos 1 valor para nao contar o token que ja foi lido */
+    if(token == 'd' || token == 'x'){
+        numTokens += sscanf(command, "%c %s", &token, arg1) - 1; 
+    }
+    else if(token == 's'){
+       	//empty
     }
     else{
-        openfileLink file = (openfileLink) malloc(sizeof(openfile_t));
-        if (!file) {
-		    perror("failed to allocate openfile\n");
-		    exit(EXIT_FAILURE);
-	    }
-        file->filename = (char*) malloc(strlen(arg1));
-        if (!(file->filename)) {
-		    perror("failed to allocate string\n");
-		    exit(EXIT_FAILURE);
-	    }
-        strcpy(file->filename, arg1);
-        file->mode = atoi(arg2);
+        numTokens += sscanf(command, "%c %s %s", &token, arg1, arg2) - 1;
+    }
+    if ((numTokens != 2) && (token == 'd' || token == 'x')) {
+        errorParse();
+    }
+    else if((numTokens != 3) && (token != 'd' && token != 'x' && token != 's')){
+        errorParse();
+    }
+    else if((numTokens != 1) && (token == 's')){
+        errorParse();
+    }
 
-        while (tabFichAbertos[i] != NULL) i++;
-                    
-        tabFichAbertos[i] = file;
-        globalOpenFileTab[numOpenFiles++] = file;
+    switch (token) {
+        case 'c':
+        { 
+            int cres = create(fs, arg1, arg2, user);               		
+            sprintf(buffer, "%d", cres);
+            write(cli, buffer, BUFF_RESP_SIZE);
+        }
+        break;
+        case 'l':
+        {
+            char contentBuffer[atoi(arg2)];
+            int rdRes = readFromFile(fs, tabFichAbertos, atoi(arg1), contentBuffer, atoi(arg2));
 
-        return SUCCESS;
-    }    
-}
-
-/* falta fazer um comando para terminar uma sessao */
-void applyCommands(uid_t owner, char* command, openfileLink *tabFichAbertos, int cli){
-        char token;
-        char arg1[MAX_INPUT_SIZE];
-        char arg2[MAX_INPUT_SIZE];
-        char buffer[BUFF_RESP_SIZE];
-        /* verificacao do token */
-        int numTokens = sscanf(command, "%c", &token);
-
-        printf("command : %s\n", command);
-
-        /*SE O COMANDO TIVER ARGS A MAIS NAO VERIFICA!!!!!!!!*/
-
-        /* tratamento do resto do comando em funcao do token,
-        subtraimos 1 valor para nao contar o token que ja foi lido */
-        if(token == 'd' || token == 'x'){
-            numTokens += sscanf(command, "%c %s", &token, arg1) - 1; 
+            if (rdRes >= 0){ 
+                char respBuffer[numberOfDigits(rdRes) + atoi(arg2) + 1];
+                sprintf(respBuffer, "%d", rdRes);
+                respBuffer[numberOfDigits(rdRes)] = ' ';
+                strcpy(&respBuffer[numberOfDigits(rdRes) + 1], contentBuffer);
+                write(cli, respBuffer, numberOfDigits(rdRes) + atoi(arg2) + 1);
+            }
+            else{
+                char respBuffer[1 + numberOfDigits(rdRes) + 1];
+                sprintf(respBuffer, "%d", rdRes);
+                write(cli, respBuffer, numberOfDigits(rdRes) + 2); 
+            }    
+        }    
+        break;
+        case 'd':
+        {
+            int dres = delete(fs, arg1, user, tabFichAbertos);
+            sprintf(buffer, "%d", dres);
+            write(cli, buffer, BUFF_RESP_SIZE);
         }
-        else if(token == 's'){
-        	//empty
+        break;
+        case 'r':
+        {
+            int renamRes = renameFile(fs, arg1, arg2, user);
+            sprintf(buffer, "%d", renamRes);
+            write(cli, buffer, BUFF_RESP_SIZE);
         }
-        else{
-            numTokens += sscanf(command, "%c %s %s", &token, arg1, arg2) - 1;
+        break;
+        case 'o':
+        {
+            int ores = openFile(fs, tabFichAbertos, arg1, atoi(arg2), user);
+            sprintf(buffer, "%d", ores);
+            write(cli, buffer, BUFF_RESP_SIZE);
         }
-        if ((numTokens != 2) && (token == 'd' || token == 'x')) {
-            errorParse();
+        break;
+        case 'x':
+        {
+            int clsres = closeFile(fs, tabFichAbertos, atoi(arg1));
+            sprintf(buffer, "%d", clsres);
+            write(cli, buffer, BUFF_RESP_SIZE);               
+        }      
+        break;
+        case 'w':
+        {
+            int wres = writeToFile(fs, tabFichAbertos, atoi(arg1), arg2);
+            sprintf(buffer, "%d", wres);
+            write(cli, buffer, BUFF_RESP_SIZE);
         }
-        else if((numTokens != 3) && (token != 'd' && token != 'x' && token != 's')){
-            errorParse();
-        }
-        else if((numTokens != 1) && (token == 's')){
-        	errorParse();
-        }
-        
-        int searchResult;
-        switch (token) {
-            case 'c':
-                { 
-				int cres = create(fs, arg1, arg2, owner);               		
-				sprintf(buffer, "%d", cres);
-                write(cli, buffer, BUFF_RESP_SIZE);
-                }
-                break;
-            case 'l':
-                {
-                char contentBuffer[atoi(arg2)];
-                int rdRes = readFromFile(fs, tabFichAbertos, atoi(arg1), contentBuffer, atoi(arg2));
-                if (rdRes >= 0){ 
-                    char respBuffer[numberOfDigits(rdRes) + atoi(arg2) + 1];
-                    sprintf(respBuffer, "%d", rdRes);
-                    respBuffer[numberOfDigits(rdRes)] = ' ';
-                    strcpy(&respBuffer[numberOfDigits(rdRes) + 1], contentBuffer);
-                    write(cli, respBuffer, numberOfDigits(rdRes) + atoi(arg2) + 1);
-                }
-                else{
-                    char respBuffer[1 + numberOfDigits(rdRes) + 1];
-                    sprintf(respBuffer, "%d", rdRes);
-                    write(cli, respBuffer, numberOfDigits(rdRes) + 2); 
-                }    
-                }    
-                break;
-            case 'd':
-                {
-                int dres = delete(fs, arg1, owner, tabFichAbertos);
-                sprintf(buffer, "%d", dres);
-                write(cli, buffer, BUFF_RESP_SIZE);
-                }
-                break;
-            case 'r':
-                {
-                int renamRes = renameFile(fs, arg1, arg2, owner);
-                sprintf(buffer, "%d", renamRes);
-                write(cli, buffer, BUFF_RESP_SIZE);
-                }
-                break;
-            case 'o':
-                {
-                int ores = openFile(tabFichAbertos, arg1, arg2);
-                sprintf(buffer, "%d", i);
-                write(cli, buffer, BUFF_RESP_SIZE);
-                }
-                break;
-            case 'x':
-                {
-                if (tabFichAbertos[atoi(arg1)] != NULL){
-                    for(int i = 0; i < numOpenFiles; i++){
-                        if (strcmp(globalOpenFileTab[i]->filename, tabFichAbertos[atoi(arg1)]->filename) == 0){
-                            globalOpenFileTab[i] = NULL;
-                            break;
-                        }
-                    }
-                    free(tabFichAbertos[atoi(arg1)]->filename);
-                    free(tabFichAbertos[atoi(arg1)]);
-                    tabFichAbertos[atoi(arg1)] = NULL;
-					sprintf(buffer, "%d", SUCCESS);
-        			write(cli, buffer, BUFF_RESP_SIZE);               
-        		}
-                else{
-					sprintf(buffer, "%d", TECNICOFS_ERROR_FILE_NOT_OPEN);
-        			write(cli, buffer, BUFF_RESP_SIZE);             
-        		}      
-                }
-                break;
-            case 'w':
-                {
-                int wres = writeToFile(fs, tabFichAbertos, atoi(arg1), arg2);
-                sprintf(buffer, "%d", wres);
-                write(cli, buffer, BUFF_RESP_SIZE);
-                }
-                break;    
-            case 's':
-                {
-                terminateSession(cli);
-                if(close(cli) == -1){
-                    fprintf(stderr, "Error: Failed to close the client socket. \n");
-                    exit(EXIT_FAILURE);
-                }
-                if (pthread_rwlock_wrlock(&numThreadsLock) != 0){
-                    exit(EXIT_FAILURE);
-                }
-                numThreads--;
-                if (pthread_rwlock_unlock(&numThreadsLock) != 0){
-                    exit(EXIT_FAILURE);
-                }
-                for(int i = 0; i < TABELA_FA_SIZE; i++){
-                    if(tabFichAbertos[i] != NULL){
-                        for(int k = 0; k < numOpenFiles; k++){
-                            if (strcmp(globalOpenFileTab[k]->filename, tabFichAbertos[i]->filename) == 0){
-                                globalOpenFileTab[k] = NULL;
-                                break;
-                            }
-                        }
-                        free(tabFichAbertos[i]->filename);
-                        free(tabFichAbertos[i]);
-                    }
-                }
-                free(tabFichAbertos);
-                exit(0);
-                }
-                break;                
-            default: { /* error */
-                fprintf(stderr, "Error: command to apply\n");
+        break;    
+        case 's':
+        {
+            terminateSession(cli);
+            if(close(cli) == -1){
+                fprintf(stderr, "Error: Failed to close the client socket. \n");
                 exit(EXIT_FAILURE);
             }
+            if (pthread_rwlock_wrlock(&numThreadsLock) != 0){
+                exit(EXIT_FAILURE);
+            }
+            numThreads--;
+            if (pthread_rwlock_unlock(&numThreadsLock) != 0){
+                exit(EXIT_FAILURE);
+            }
+            for(int i = 0; i < TABELA_FA_SIZE; i++){
+                if(tabFichAbertos[i] != NULL){
+                    free(tabFichAbertos[i]->filename);
+                    free(tabFichAbertos[i]);
+                }
+            }
+            free(tabFichAbertos);
+            exit(0);
         }
+        break;                
+        default: { /* error */
+            fprintf(stderr, "Error: command to apply\n");
+            exit(EXIT_FAILURE);
+        }
+    }
 }
 
 void *trataCliente(void *arg){
@@ -327,17 +269,17 @@ void *trataCliente(void *arg){
 
 void criaThread(int cli){
     
-    if (pthread_rwlock_rdlock(&numThreadsLock) != 0){
+    if(pthread_rwlock_rdlock(&numThreadsLock) != 0){
         exit(EXIT_FAILURE);
     }
-    if (numThreads == tidTableSize){
+    if(numThreads == tidTableSize){
         tid = (pthread_t *) realloc(tid, sizeof(pthread_t)*(++tidTableSize));
     }
-    if (pthread_rwlock_unlock(&numThreadsLock) != 0){
+    if(pthread_rwlock_unlock(&numThreadsLock) != 0){
         exit(EXIT_FAILURE);
     }
     
-    if (pthread_rwlock_wrlock(&numThreadsLock) != 0){
+    if(pthread_rwlock_wrlock(&numThreadsLock) != 0){
         exit(EXIT_FAILURE);
     }
     if(pthread_create(&tid[numThreads++], 0, trataCliente, (void *) &cli) != 0){
@@ -364,7 +306,7 @@ int main(int argc, char* argv[]) {
     sigset_t signal_mask;
     FILE *fout;
     struct sigaction terminateAction;
-
+    char socketName[SOCK_SIZE];
 
     /* gera uma seed baseada no tempo
     do sistema para usar na funcao rand() */
@@ -372,15 +314,20 @@ int main(int argc, char* argv[]) {
     
     parseArgs(argc, argv);
 
+    strcpy(socketName, argv[1]);
+
     if(sem_init(&clientfd, 0, 0) == -1){
-    	exit(EXIT_FAILURE);
+    	printf("sem init\n");
+        exit(EXIT_FAILURE);
     }
 
     if (pthread_rwlock_init(&tabSessoesLock ,NULL) != 0){
+        printf("sessoes lock init\n");
         exit(EXIT_FAILURE);
     }
 
     if (pthread_rwlock_init(&numThreadsLock ,NULL) != 0){
+        printf("threads lock init\n");
         exit(EXIT_FAILURE);
     }
 
@@ -407,9 +354,8 @@ int main(int argc, char* argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    if(unlink(socketName) == -1){
-        exit(EXIT_FAILURE);
-    }
+    unlink(socketName);
+
     memset(&server_addr, 0, sizeof(server_addr));
 
     server_addr.sun_family = AF_UNIX; 
@@ -425,10 +371,13 @@ int main(int argc, char* argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    if(sigemptyset (&signal_mask) == -1){
+    if(sigemptyset(&signal_mask) == -1){
+        fprintf(stderr, "Error: sigemptyset. \n");
         exit(EXIT_FAILURE);
     }
+
     if(sigaddset(&signal_mask, SIGINT) == -1){
+        fprintf(stderr, "Error: sigaddset. \n");
         exit(EXIT_FAILURE);
     }
 
@@ -437,6 +386,7 @@ int main(int argc, char* argv[]) {
     terminateAction.sa_handler = rotinaTratamentoSignal;
 
     if(sigaction(SIGINT, &terminateAction, NULL) == -1){
+        fprintf(stderr, "Error: sigaction. \n");
         exit(EXIT_FAILURE);
     }
 
@@ -444,6 +394,8 @@ int main(int argc, char* argv[]) {
 
     while(signalActivated == 0) {
         int sessionAlreadyExistsFlag = 0;
+        char buffer[4];
+        
         cli = accept(sockfd, NULL, NULL);
         if (cli == -1){
             if (signalActivated == 0){
@@ -480,14 +432,16 @@ int main(int argc, char* argv[]) {
             if(numSessoes == tabSessoesSize)
                 tabSessoes = (int *) realloc(tabSessoes, sizeof(int*)*(++tabSessoesSize));
             tabSessoes[numSessoes++] = ucred.uid;
-            write(cli, "no\0", 3);
+            sprintf(buffer, "%d", SUCCESS);
+            write(cli, buffer, 4);
 
             if (pthread_rwlock_unlock(&tabSessoesLock) != 0){
                 exit(EXIT_FAILURE);
             }
         }
         else{
-            write(cli, "yes\0", 4);
+            sprintf(buffer, "%d", TECNICOFS_ERROR_OPEN_SESSION);
+            write(cli, buffer, 4);
         }
 
         criaThread(cli);
