@@ -272,16 +272,29 @@ int openFile(tecnicofs *fs, openfileLink *tabFichAbertos, char *filename, permis
     else{
         uid_t owner;
         permission ownerPermissions, othersPermissions;
+        
+        for(i = 0; i < TABELA_FA_SIZE; i++){
+            if (tabFichAbertos[i] == NULL){
+                break;
+            }
+        }
 
+        if(i == TABELA_FA_SIZE){
+            return TECNICOFS_ERROR_MAXED_OPEN_FILES;
+        }
+                
         if(inode_get(searchResult, &owner, &ownerPermissions, &othersPermissions, NULL, 0) == -1)
             return TECNICOFS_ERROR_OTHER;
 
         if(user != owner){
-            if((othersPermissions == READ) && (mode == WRITE))
-                return TECNICOFS_ERROR_INVALID_MODE;
+            if (othersPermissions == NONE){
+                return TECNICOFS_ERROR_PERMISSION_DENIED;
+            }
+            else if((othersPermissions == READ) && (mode == WRITE))
+                return TECNICOFS_ERROR_PERMISSION_DENIED;
 
             else if((othersPermissions == WRITE) && (mode == READ))
-                return TECNICOFS_ERROR_INVALID_MODE;
+                return TECNICOFS_ERROR_PERMISSION_DENIED;
         }
 
         openfileLink file = (openfileLink) malloc(sizeof(openfile_t));
@@ -289,7 +302,7 @@ int openFile(tecnicofs *fs, openfileLink *tabFichAbertos, char *filename, permis
             perror("failed to allocate openfile\n");
             exit(EXIT_FAILURE);
         }
-        file->filename = (char*) malloc(sizeof(char)*strlen(filename));
+        file->filename = (char*) malloc(sizeof(char)*(strlen(filename) + 1));
         if (!(file->filename)) {
             perror("failed to allocate string\n");
             exit(EXIT_FAILURE);
@@ -298,7 +311,6 @@ int openFile(tecnicofs *fs, openfileLink *tabFichAbertos, char *filename, permis
         file->mode = mode;
 
         while (tabFichAbertos[i] != NULL) i++;
-
         tabFichAbertos[i] = file;
 
         return SUCCESS;            
@@ -310,6 +322,7 @@ int closeFile(tecnicofs *fs, openfileLink *tabFichAbertos, int fd){
         free(tabFichAbertos[fd]->filename);
         free(tabFichAbertos[fd]);
         tabFichAbertos[fd] = NULL;
+
         return SUCCESS;
     }
     else{

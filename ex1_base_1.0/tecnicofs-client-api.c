@@ -29,9 +29,9 @@ int commandResponse(char* command){
 	char command_resp[4];
 
 	if(write(sockfd, command, strlen(command)+1) == -1)
-		return TECNICOFS_ERROR_OTHER;
+		return TECNICOFS_ERROR_CONNECTION_ERROR;
 	if(read(sockfd, command_resp, 4) == -1)
-		return TECNICOFS_ERROR_OTHER;
+		return TECNICOFS_ERROR_CONNECTION_ERROR;
 
 	return atoi(command_resp);
 }
@@ -51,6 +51,10 @@ int tfsMount(char* address){
 	char mount_resp[4];
 	struct sockaddr_un server_addr;
 
+	if(sockfd != -1){
+		return 	TECNICOFS_ERROR_OPEN_SESSION;
+	}
+
 	if(createSocket() == -1){
 		return TECNICOFS_ERROR_OTHER;
 	}
@@ -65,7 +69,7 @@ int tfsMount(char* address){
     }
 
     if(read(sockfd, mount_resp, 4) == -1){
-    	return TECNICOFS_ERROR_OTHER;
+    	return TECNICOFS_ERROR_CONNECTION_ERROR;
     }
     
     if(atoi(mount_resp) != SUCCESS){
@@ -84,7 +88,7 @@ int tfsUnmount(){
 	}
 
 	if(write(sockfd, "s\0", 2) == -1)
-		return TECNICOFS_ERROR_NO_OPEN_SESSION;
+		return TECNICOFS_ERROR_CONNECTION_ERROR;
 	if(read(sockfd, unmount_resp, 8) == -1)
 		return TECNICOFS_ERROR_CONNECTION_ERROR;
 
@@ -227,9 +231,9 @@ int tfsRead(int fd, char *buffer, int len){
 	strcpy(&command[4], slen);
 
 	if(write(sockfd, command, strlen(command) + 1) == -1)
-		return TECNICOFS_ERROR_OTHER;
+		return TECNICOFS_ERROR_CONNECTION_ERROR;
 	if(read(sockfd, respBuffer, len+2) == -1)
-		return TECNICOFS_ERROR_OTHER;
+		return TECNICOFS_ERROR_CONNECTION_ERROR;
 
 	if(respBuffer[1] == ' '){
 		strcpy(buffer, &respBuffer[2]);

@@ -27,18 +27,20 @@
 #define BUFF_SIZE 1024
 #define FD_NULL -1
 #define UID_NULL -1
+#define CLOSE_SESSION_CONSTANT -1
 #define BUFF_RESP_SIZE 3
 
 long numberBuckets = 0;
 int tidTableSize = 0, tabSessoesSize = 0, numSessoes = 0, 
-numThreads = 0, sockfd, signalActivated = 0, numThreadsOnSignal, numOpenFiles = 0;
+numThreads = 0, sockfd, signalActivated = 0;
 pthread_t* tid;
 struct timeval begin, end;
 tecnicofs* fs;
-int *tabSessoes;
+u_int32_t *tabSessoes;
 sem_t clientfd;
 pthread_rwlock_t tabSessoesLock;
-pthread_rwlock_t numThreadsLock;
+pthread_mutex_t numThreadsLock;
+pthread_cond_t exitCond;
 
 static void displayUsage (const char* appName){
     printf("Usage: %s\n", appName);
@@ -53,11 +55,6 @@ static void parseArgs (long argc, char* const argv[]){
     numberBuckets = strtol(argv[3], NULL, 10);
 }
 
-void errorParse(){
-    fprintf(stderr, "Error: command invalid\n");
-    exit(EXIT_FAILURE);
-}
-
 int numberOfDigits(int n){
     int count = 0;
 
@@ -69,15 +66,8 @@ int numberOfDigits(int n){
     return count;
 }
 
-int terminateSession(int cli, openfileLink *tabFichAbertos){
-    int sessionExistsFlag = 0, ulen, i; 
-    struct ucred ucred;
-
-    ulen = sizeof(struct ucred);
-    if (getsockopt(cli, SOL_SOCKET, SO_PEERCRED, &ucred, (socklen_t *) &ulen) == -1){
-        fprintf(stderr, "Error: Failed to get client credentials. \n");
-        exit(EXIT_FAILURE);
-    }
+int terminateSession(uid_t uid, int cli, openfileLink *tabFichAbertos){
+    int sessionExistsFlag = 0, i; 
 
     for(int i = 0; i < TABELA_FA_SIZE; i++){
         if(tabFichAbertos[i] != NULL){
@@ -90,7 +80,7 @@ int terminateSession(int cli, openfileLink *tabFichAbertos){
         exit(EXIT_FAILURE);
     }    
     for(i = 0; i < tabSessoesSize; i++){
-        if(ucred.uid == tabSessoes[i]){
+        if(uid == tabSessoes[i]){
             sessionExistsFlag++;
             break;
         }
@@ -120,25 +110,37 @@ void closeClientConnection(int cli){
         fprintf(stderr, "Error: Failed to close the client socket. \n");
         exit(EXIT_FAILURE);
     }
-    if (pthread_rwlock_wrlock(&numThreadsLock) != 0){
+    if (pthread_mutex_lock(&numThreadsLock) != 0){
         exit(EXIT_FAILURE);
     }
     numThreads--;
-    if (pthread_rwlock_unlock(&numThreadsLock) != 0){
+    if (pthread_mutex_unlock(&numThreadsLock) != 0){
         exit(EXIT_FAILURE);
     }
+
+}
+
+void terminateClientThread(struct ucred ucred, int cli, openfileLink* tabFichAbertos){
+    terminateSession(ucred.pid, cli, tabFichAbertos);
+    pthread_detach(pthread_self());
+    closeClientConnection(cli);
+    pthread_cond_signal(&exitCond);
     pthread_exit(NULL);
 }
 
-void applyCommand(uid_t user, char* command, openfileLink *tabFichAbertos, int cli){
+void errorParse(struct ucred ucred, int cli, openfileLink* tabFichAbertos){
+    fprintf(stderr, "Error: command invalid\n");
+    terminateClientThread(ucred, cli, tabFichAbertos);
+}
+
+void applyCommand(struct ucred ucred, char* command, openfileLink *tabFichAbertos, int cli){
     char token;
     char arg1[MAX_INPUT_SIZE];
     char arg2[MAX_INPUT_SIZE];
     char buffer[BUFF_RESP_SIZE];
+    memset(buffer, '\0', BUFF_RESP_SIZE);
     /* verificacao do token */
     int numTokens = sscanf(command, "%c", &token);
-
-    /*SE O COMANDO TIVER ARGS A MAIS NAO VERIFICA!!!!!!!!*/
 
     /* tratamento do resto do comando em funcao do token,
        subtraimos 1 valor para nao contar o token que ja foi lido */
@@ -151,24 +153,26 @@ void applyCommand(uid_t user, char* command, openfileLink *tabFichAbertos, int c
     else{
         numTokens += sscanf(command, "%c %s %s", &token, arg1, arg2) - 1;
     }
-    if ((numTokens != 2) && (token == 'd' || token == 'x')) {
-        errorParse();
+    if ((token == 'd' || token == 'x') &&  (numTokens != 2)) {
+        printf("numtokens : [%d]\n", numTokens);
+        errorParse(ucred, cli, tabFichAbertos);
     }
-    else if((numTokens != 3) && (token != 'd' && token != 'x' && token != 's')){
-        errorParse();
+    else if((token != 'd' && token != 'x' && token != 's') && (numTokens != 3)){
+        printf("numtokens : [%d]\n", numTokens);
+        errorParse(ucred, cli, tabFichAbertos);
     }
-    else if((numTokens != 1) && (token == 's')){
-        errorParse();
+    else if((token == 's') && (numTokens != 1)){
+        printf("numtokens : [%d]\n", numTokens);
+        errorParse(ucred, cli, tabFichAbertos);
     }
 
     switch (token) {
         case 'c':
         { 
-            int cres = create(fs, arg1, arg2, user);               		
+            int cres = create(fs, arg1, arg2, ucred.uid);               		
             sprintf(buffer, "%d", cres);
             if(write(cli, buffer, BUFF_RESP_SIZE) == -1) {
-                terminateSession(cli, tabFichAbertos);
-                closeClientConnection(cli);        
+                terminateClientThread(ucred, cli, tabFichAbertos);        
             }
         }
         break;
@@ -179,51 +183,47 @@ void applyCommand(uid_t user, char* command, openfileLink *tabFichAbertos, int c
 
             if (rdRes >= 0){ 
                 char respBuffer[numberOfDigits(rdRes) + atoi(arg2) + 1];
+                memset(respBuffer, '\0', numberOfDigits(rdRes) + atoi(arg2) + 1);
                 sprintf(respBuffer, "%d", rdRes);
                 respBuffer[numberOfDigits(rdRes)] = ' ';
                 strcpy(&respBuffer[numberOfDigits(rdRes) + 1], contentBuffer);
                 if(write(cli, respBuffer, numberOfDigits(rdRes) + atoi(arg2) + 1) == -1){
-                    terminateSession(cli, tabFichAbertos);
-                    closeClientConnection(cli);          
+                    terminateClientThread(ucred, cli, tabFichAbertos);          
                 }
             }
             else{
                 char respBuffer[1 + numberOfDigits(rdRes) + 1];
                 sprintf(respBuffer, "%d", rdRes);
                 if(write(cli, respBuffer, numberOfDigits(rdRes) + 2) == -1){
-                    terminateSession(cli, tabFichAbertos);
-                    closeClientConnection(cli); 
+                    terminateClientThread(ucred, cli, tabFichAbertos); 
                 }
             }    
         }    
         break;
         case 'd':
         {
-            int dres = delete(fs, arg1, user, tabFichAbertos);
+            int dres = delete(fs, arg1, ucred.uid, tabFichAbertos);
             sprintf(buffer, "%d", dres);
             if(write(cli, buffer, BUFF_RESP_SIZE) == -1) {
-                terminateSession(cli, tabFichAbertos);
-                closeClientConnection(cli);        
+                terminateClientThread(ucred, cli, tabFichAbertos);        
             }       
         }
         break;
         case 'r':
         {
-            int renamRes = renameFile(fs, arg1, arg2, user, tabFichAbertos);
+            int renamRes = renameFile(fs, arg1, arg2, ucred.uid, tabFichAbertos);
             sprintf(buffer, "%d", renamRes);
             if(write(cli, buffer, BUFF_RESP_SIZE) == -1) {
-                terminateSession(cli, tabFichAbertos);
-                closeClientConnection(cli);        
+                terminateClientThread(ucred, cli, tabFichAbertos);        
             }       
         }
         break;
         case 'o':
         {
-            int ores = openFile(fs, tabFichAbertos, arg1, atoi(arg2), user);
+            int ores = openFile(fs, tabFichAbertos, arg1, atoi(arg2), ucred.uid);
             sprintf(buffer, "%d", ores);
             if(write(cli, buffer, BUFF_RESP_SIZE) == -1) {
-                terminateSession(cli, tabFichAbertos);
-                closeClientConnection(cli);        
+                terminateClientThread(ucred, cli, tabFichAbertos);        
             }
         }
         break;
@@ -232,8 +232,7 @@ void applyCommand(uid_t user, char* command, openfileLink *tabFichAbertos, int c
             int clsres = closeFile(fs, tabFichAbertos, atoi(arg1));
             sprintf(buffer, "%d", clsres);
             if(write(cli, buffer, BUFF_RESP_SIZE) == -1){
-                terminateSession(cli, tabFichAbertos);
-                closeClientConnection(cli);        
+                terminateClientThread(ucred, cli, tabFichAbertos);        
             }
         }      
         break;
@@ -242,23 +241,24 @@ void applyCommand(uid_t user, char* command, openfileLink *tabFichAbertos, int c
             int wres = writeToFile(fs, tabFichAbertos, atoi(arg1), arg2);
             sprintf(buffer, "%d", wres);
             if(write(cli, buffer, BUFF_RESP_SIZE) == -1){
-                terminateSession(cli, tabFichAbertos);
-                closeClientConnection(cli);        
+                terminateClientThread(ucred, cli, tabFichAbertos);        
             }
 
         }
         break;    
         case 's':
         {
-            int tres = terminateSession(cli, tabFichAbertos);
+            int tres = terminateSession(ucred.pid, cli, tabFichAbertos);
             sprintf(buffer, "%d", tres);
             write(cli, buffer, BUFF_RESP_SIZE);
+            pthread_detach(pthread_self());
             closeClientConnection(cli);
+            pthread_cond_signal(&exitCond);
+            pthread_exit(NULL);
         }
         break;                
         default: { /* error */
-            fprintf(stderr, "Error: command to apply\n");
-            exit(EXIT_FAILURE);
+            terminateClientThread(ucred, cli, tabFichAbertos);
         }
     }
 }
@@ -272,6 +272,7 @@ void *trataCliente(void *arg){
     openfileLink tabFichAbertos[TABELA_FA_SIZE] = {NULL};
     sigset_t signal_mask;
 
+    
     if(sigemptyset(&signal_mask) == -1){
         fprintf(stderr, "Error: sigemptyset. \n");
         exit(EXIT_FAILURE);
@@ -301,34 +302,34 @@ void *trataCliente(void *arg){
     }
 
     while(1){
+		int readResult = -1;
         memset(buff, 0, sizeof(char));
-        if(read(clifd, buff, BUFF_SIZE) == -1){
-            terminateSession(clifd, tabFichAbertos);
-            closeClientConnection(clifd);
+        if((readResult = read(clifd, buff, BUFF_SIZE)) == -1){
+            terminateClientThread(ucred, clifd, tabFichAbertos);
         }
-        applyCommand(ucred.uid, buff, tabFichAbertos, clifd);
+        applyCommand(ucred, buff, tabFichAbertos, clifd);  
     }
+    return NULL;
 }
 
 void criaThread(int cli){
     
-    if(pthread_rwlock_rdlock(&numThreadsLock) != 0){
+    if(pthread_mutex_lock(&numThreadsLock) != 0){
         exit(EXIT_FAILURE);
     }
+
     if(numThreads == tidTableSize){
         tid = (pthread_t *) realloc(tid, sizeof(pthread_t)*(++tidTableSize));
-    }
-    if(pthread_rwlock_unlock(&numThreadsLock) != 0){
-        exit(EXIT_FAILURE);
+        if(tid == NULL){
+            exit(EXIT_FAILURE);
+        }
     }
     
-    if(pthread_rwlock_wrlock(&numThreadsLock) != 0){
+    if(pthread_create(&tid[numThreads], 0, trataCliente, (void *) &cli) != 0){
         exit(EXIT_FAILURE);
     }
-    if(pthread_create(&tid[numThreads++], 0, trataCliente, (void *) &cli) != 0){
-        exit(EXIT_FAILURE);
-    }
-    if (pthread_rwlock_unlock(&numThreadsLock) != 0){
+    numThreads++;
+    if (pthread_mutex_unlock(&numThreadsLock) != 0){
         exit(EXIT_FAILURE);
     }
     if(sem_wait(&clientfd) == -1){
@@ -337,14 +338,13 @@ void criaThread(int cli){
 }
 
 void rotinaTratamentoSignal(){
-    numThreadsOnSignal = numThreads;
     signalActivated++;
 }
 
 int main(int argc, char* argv[]) {
     time_t t;
     struct sockaddr_un server_addr;
-    int cli, ulen, i;
+    int ulen, i;
     struct ucred ucred;
     FILE *fout;
     struct sigaction terminateAction;
@@ -359,36 +359,51 @@ int main(int argc, char* argv[]) {
     strcpy(socketName, argv[1]);
 
     if(sem_init(&clientfd, 0, 0) == -1){
-    	printf("sem init\n");
+    	fprintf(stderr ,"sem init\n");
         exit(EXIT_FAILURE);
     }
 
     if (pthread_rwlock_init(&tabSessoesLock ,NULL) != 0){
-        printf("sessoes lock init\n");
+        fprintf( stderr ,"sessoes lock init\n");
         exit(EXIT_FAILURE);
     }
 
-    if (pthread_rwlock_init(&numThreadsLock ,NULL) != 0){
-        printf("threads lock init\n");
+    if (pthread_mutex_init(&numThreadsLock ,NULL) != 0){
+        fprintf(stderr,"threads lock init\n");
+        exit(EXIT_FAILURE);
+    }
+
+    if(pthread_cond_init(&exitCond, NULL) != 0){
         exit(EXIT_FAILURE);
     }
 
     fs = new_tecnicofs(numberBuckets);
     fout = fopen(argv[2], "w");
     if (fout == NULL){
-        fprintf(stderr, "Error: Failed to get client credentials. \n");
+        fprintf(stderr, "Error: Failed to open file. \n");
         exit(EXIT_FAILURE);
     }
 
     tid = (pthread_t *) malloc(sizeof(pthread_t));
+    tidTableSize++;
     if (!tid){
         perror("failed to allocate tid\n");
 		exit(EXIT_FAILURE);
     }
-    tabSessoes = (int *) malloc(sizeof(int));
+
+    tabSessoes = (u_int32_t *) malloc(sizeof(u_int32_t));
     if (!tabSessoes){
         perror("failed to allocate tabSessoes\n");
 		exit(EXIT_FAILURE);
+    }
+
+	if (pthread_rwlock_wrlock(&tabSessoesLock) != 0){
+        exit(EXIT_FAILURE);
+    }
+    tabSessoesSize++;
+    memset(tabSessoes, 0, tabSessoesSize);
+    if (pthread_rwlock_unlock(&tabSessoesLock) != 0){
+        exit(EXIT_FAILURE);
     }
 
     if((sockfd = socket(AF_UNIX, SOCK_STREAM, 0)) == -1){
@@ -430,7 +445,9 @@ int main(int argc, char* argv[]) {
 
     while(signalActivated == 0) {
         int sessionAlreadyExistsFlag = 0;
+		int cli = -1;
         char buffer[BUFF_RESP_SIZE];
+        memset(buffer, '\0', BUFF_RESP_SIZE);
         
         cli = accept(sockfd, NULL, NULL);
         if (cli == -1){
@@ -448,11 +465,12 @@ int main(int argc, char* argv[]) {
             exit(EXIT_FAILURE);
         }
 
+
         if (pthread_rwlock_rdlock(&tabSessoesLock) != 0){
             exit(EXIT_FAILURE);
         }
         for(i = 0; i < tabSessoesSize; i++){
-            if(ucred.uid == tabSessoes[i]){
+            if(ucred.pid == tabSessoes[i]){
                 sessionAlreadyExistsFlag++;
                 break;
             }
@@ -466,31 +484,40 @@ int main(int argc, char* argv[]) {
                 exit(EXIT_FAILURE);
             }
             if(numSessoes == tabSessoesSize)
-                tabSessoes = (int *) realloc(tabSessoes, sizeof(int*)*(++tabSessoesSize));
-            tabSessoes[numSessoes++] = ucred.uid;
+                tabSessoes = (u_int32_t *) realloc(tabSessoes, sizeof(u_int32_t)*(++tabSessoesSize));
+            tabSessoes[numSessoes++] = ucred.pid;
             sprintf(buffer, "%d", SUCCESS);
             if(write(cli, buffer, BUFF_RESP_SIZE) == -1){
-                closeClientConnection(cli);
+                if(close(cli) == -1){
+                    exit(EXIT_FAILURE);
+                }
             }
             if (pthread_rwlock_unlock(&tabSessoesLock) != 0){
                 exit(EXIT_FAILURE);
             }
+
+			criaThread(cli);
         }
         else{
             sprintf(buffer, "%d", TECNICOFS_ERROR_OPEN_SESSION);
             if(write(cli, buffer, BUFF_RESP_SIZE) == -1){
-                closeClientConnection(cli);       
+                if(close(cli) == -1){
+                    exit(EXIT_FAILURE);
+                }       
             }
         
         }
-
-        criaThread(cli);
     }
 
-    for (i = 0; i < numThreadsOnSignal; i++){
-        if(pthread_join(tid[i], NULL) != 0){
-            exit(EXIT_FAILURE);
-        }
+
+    if(pthread_mutex_lock(&numThreadsLock) != 0){
+        exit(EXIT_FAILURE);
+    }
+    while (numThreads != 0){
+        pthread_cond_wait(&exitCond, &numThreadsLock);
+    }
+    if(pthread_mutex_unlock(&numThreadsLock) != 0){
+        exit(EXIT_FAILURE);
     }
 
     gettimeofday(&end, NULL);
@@ -499,7 +526,7 @@ int main(int argc, char* argv[]) {
     print_tecnicofs_trees(fout, fs);
 
     if(fclose(fout) == EOF){
-        fprintf(stderr, "Error: Failed to get client credentials. \n");
+        fprintf(stderr, "Error: Failed to close file. \n");
         exit(EXIT_FAILURE);
     }
 
@@ -507,7 +534,7 @@ int main(int argc, char* argv[]) {
         exit(EXIT_FAILURE);
     }
     if(close(sockfd) == -1){
-        fprintf(stderr, "Error: Failed to get client credentials. \n");
+        fprintf(stderr, "Error: Failed to close sockfd. \n");
         exit(EXIT_FAILURE);
     }
 
@@ -519,7 +546,11 @@ int main(int argc, char* argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    if (pthread_rwlock_destroy(&numThreadsLock) != 0){
+    if (pthread_mutex_destroy(&numThreadsLock) != 0){
+        exit(EXIT_FAILURE);
+    }
+
+    if(pthread_cond_destroy(&exitCond) != 0){
         exit(EXIT_FAILURE);
     }
 
