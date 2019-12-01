@@ -10,10 +10,10 @@ LDFLAGS=-lm
 # https://www.gnu.org/software/make/manual/html_node/Phony-Targets.html
 .PHONY: all clean run
 
-all: tecnicofs
+all: tecnicofs-rwlock
 
-tecnicofs: lib/inodes.o lib/bst.o lib/hash.o fs.o main.o
-	$(LD) $(CFLAGS) $(LDFLAGS) -o tecnicofs lib/inodes.o lib/bst.o lib/hash.o fs.o main.o	
+tecnicofs-rwlock: lib/inodes.o lib/bst.o lib/hash.o fs.o main.o
+	$(LD) $(CFLAGS) $(LDFLAGS) -o tecnicofs-rwlock lib/inodes.o lib/bst.o lib/hash.o fs.o main.o	
 
 lib/bst.o: lib/bst.c lib/bst.h
 	$(CC) $(CFLAGS) -o lib/bst.o -c lib/bst.c
@@ -32,11 +32,7 @@ main.o: main.c lib/inodes.h fs.h lib/bst.h lib/hash.h tecnicofs-api-constants.h
 
 clean:
 	@echo Cleaning...
-	rm -f tecnicofs lib/*.o *.o 
+	rm -f tecnicofs-rwlock lib/*.o *.o 
 
-run-nosync: tecnicofs-nosync
-	./tecnicofs-nosync inputs/test5.txt out.txt 1 1
-run-mutex: tecnicofs-mutex
-	./tecnicofs-mutex inputs/test5.txt out.txt 7 4
 run-rwlock: tecnicofs-rwlock
-	./tecnicofs-rwlock inputs/test5.txt out.txt 7 4
+	./tecnicofs-rwlock /tmp/tfs_socket out.txt 7 

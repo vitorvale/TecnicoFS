@@ -1,7 +1,7 @@
 /* Projeto SO - 
     grupo 1 : Vitor Vale  e Tomas Saraiva */
    
-/* ver a terminacao apos testes */
+/* ver retorno dos writes e reads (int/string) */
 #define _GNU_SOURCE
 
 #include <stdio.h>
@@ -37,10 +37,10 @@ pthread_t* tid;
 struct timeval begin, end;
 tecnicofs* fs;
 u_int32_t *tabSessoes;
-sem_t clientfd;
+sem_t clientfd; //indica se a tarefa escrava ja guardou o fd do socket do cliente
 pthread_rwlock_t tabSessoesLock;
 pthread_mutex_t numThreadsLock;
-pthread_cond_t exitCond;
+pthread_cond_t exitCond;    //verifica se todas as tarefas terminaram apos o signal
 
 static void displayUsage (const char* appName){
     printf("Usage: %s\n", appName);
@@ -66,6 +66,7 @@ int numberOfDigits(int n){
     return count;
 }
 
+//liberta tabela de ficheiros abertos e termina a sessao caso exista
 int terminateSession(uid_t uid, int cli, openfileLink *tabFichAbertos){
     int sessionExistsFlag = 0, i; 
 
@@ -122,7 +123,7 @@ void closeClientConnection(int cli){
 
 void terminateClientThread(struct ucred ucred, int cli, openfileLink* tabFichAbertos){
     terminateSession(ucred.pid, cli, tabFichAbertos);
-    pthread_detach(pthread_self());
+    pthread_detach(pthread_self()); //previne que a tarefa fique num estado 'zombie' a espera do join
     closeClientConnection(cli);
     pthread_cond_signal(&exitCond);
     pthread_exit(NULL);
@@ -154,15 +155,12 @@ void applyCommand(struct ucred ucred, char* command, openfileLink *tabFichAberto
         numTokens += sscanf(command, "%c %s %s", &token, arg1, arg2) - 1;
     }
     if ((token == 'd' || token == 'x') &&  (numTokens != 2)) {
-        printf("numtokens : [%d]\n", numTokens);
         errorParse(ucred, cli, tabFichAbertos);
     }
     else if((token != 'd' && token != 'x' && token != 's') && (numTokens != 3)){
-        printf("numtokens : [%d]\n", numTokens);
         errorParse(ucred, cli, tabFichAbertos);
     }
     else if((token == 's') && (numTokens != 1)){
-        printf("numtokens : [%d]\n", numTokens);
         errorParse(ucred, cli, tabFichAbertos);
     }
 
@@ -181,7 +179,7 @@ void applyCommand(struct ucred ucred, char* command, openfileLink *tabFichAberto
             char contentBuffer[atoi(arg2)];
             int rdRes = readFromFile(fs, tabFichAbertos, atoi(arg1), contentBuffer, atoi(arg2));
 
-            if (rdRes >= 0){ 
+            if (rdRes >= 0){    //separa o caso de sucesso do caso de erro
                 char respBuffer[numberOfDigits(rdRes) + atoi(arg2) + 1];
                 memset(respBuffer, '\0', numberOfDigits(rdRes) + atoi(arg2) + 1);
                 sprintf(respBuffer, "%d", rdRes);
@@ -250,8 +248,8 @@ void applyCommand(struct ucred ucred, char* command, openfileLink *tabFichAberto
         {
             int tres = terminateSession(ucred.pid, cli, tabFichAbertos);
             sprintf(buffer, "%d", tres);
-            write(cli, buffer, BUFF_RESP_SIZE);
-            pthread_detach(pthread_self());
+            write(cli, buffer, BUFF_RESP_SIZE);     //neste caso nao e necessario testar retorno do write
+            pthread_detach(pthread_self());         //porque vai fechar a coneccao de qualquer forma
             closeClientConnection(cli);
             pthread_cond_signal(&exitCond);
             pthread_exit(NULL);
@@ -263,6 +261,7 @@ void applyCommand(struct ucred ucred, char* command, openfileLink *tabFichAberto
     }
 }
 
+//funcao excutada pela tarefa escrava para comunicar com o cliente
 void *trataCliente(void *arg){
     int *cli = (int*) arg;
     int clifd;
@@ -283,7 +282,7 @@ void *trataCliente(void *arg){
         exit(EXIT_FAILURE);
     }
 
-    if(pthread_sigmask(SIG_BLOCK, &signal_mask, NULL) != 0){
+    if(pthread_sigmask(SIG_BLOCK, &signal_mask, NULL) != 0){    //bloqueia o signal SIGINT para a terefa escrava
         fprintf(stderr, "Error: pthread_sigmask. \n");
         exit(EXIT_FAILURE);
     }
@@ -291,7 +290,7 @@ void *trataCliente(void *arg){
     memset(buff, 0, sizeof(char));
 
     clifd = *cli;
-    if (sem_post(&clientfd) == -1){
+    if (sem_post(&clientfd) == -1){ //avisa que ja guardou o fd do socket do cliente
         exit(EXIT_FAILURE);
     }
     
@@ -302,9 +301,8 @@ void *trataCliente(void *arg){
     }
 
     while(1){
-		int readResult = -1;
         memset(buff, 0, sizeof(char));
-        if((readResult = read(clifd, buff, BUFF_SIZE)) == -1){
+        if(read(clifd, buff, BUFF_SIZE) == -1){
             terminateClientThread(ucred, clifd, tabFichAbertos);
         }
         applyCommand(ucred, buff, tabFichAbertos, clifd);  
@@ -332,7 +330,7 @@ void criaThread(int cli){
     if (pthread_mutex_unlock(&numThreadsLock) != 0){
         exit(EXIT_FAILURE);
     }
-    if(sem_wait(&clientfd) == -1){
+    if(sem_wait(&clientfd) == -1){      //espera que a tarefa escrava guarde o fd do socket do cliente
         exit(EXIT_FAILURE);
     }
 }
@@ -363,12 +361,12 @@ int main(int argc, char* argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    if (pthread_rwlock_init(&tabSessoesLock ,NULL) != 0){
+    if (pthread_rwlock_init(&tabSessoesLock, NULL) != 0){
         fprintf( stderr ,"sessoes lock init\n");
         exit(EXIT_FAILURE);
     }
 
-    if (pthread_mutex_init(&numThreadsLock ,NULL) != 0){
+    if (pthread_mutex_init(&numThreadsLock, NULL) != 0){
         fprintf(stderr,"threads lock init\n");
         exit(EXIT_FAILURE);
     }
@@ -391,8 +389,8 @@ int main(int argc, char* argv[]) {
 		exit(EXIT_FAILURE);
     }
 
-    tabSessoes = (u_int32_t *) malloc(sizeof(u_int32_t));
-    if (!tabSessoes){
+    tabSessoes = (u_int32_t *) malloc(sizeof(u_int32_t));   //guarda os PID's dos clientes com 
+    if (!tabSessoes){                                       //sessao ativa
         perror("failed to allocate tabSessoes\n");
 		exit(EXIT_FAILURE);
     }
@@ -411,7 +409,7 @@ int main(int argc, char* argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    unlink(socketName);
+    unlink(socketName);     //ignorar retorno pois pode nao existir socket com este nome
 
     memset(&server_addr, 0, sizeof(server_addr));
 
@@ -436,7 +434,7 @@ int main(int argc, char* argv[]) {
     terminateAction.sa_flags = 0;
     terminateAction.sa_handler = rotinaTratamentoSignal;
 
-    if(sigaction(SIGINT, &terminateAction, NULL) == -1){
+    if(sigaction(SIGINT, &terminateAction, NULL) == -1){    //associa rotina de tratamento ao signal
         fprintf(stderr, "Error: sigaction. \n");
         exit(EXIT_FAILURE);
     }
@@ -451,7 +449,7 @@ int main(int argc, char* argv[]) {
         
         cli = accept(sockfd, NULL, NULL);
         if (cli == -1){
-            if (signalActivated == 0){
+            if (signalActivated == 0){  //test if accept error was due to signal activation
                 fprintf(stderr, "Error: Failed to accept connection. \n");
                 exit(EXIT_FAILURE);
             }
@@ -505,17 +503,15 @@ int main(int argc, char* argv[]) {
                     exit(EXIT_FAILURE);
                 }       
             }
-        
         }
     }
-
 
     if(pthread_mutex_lock(&numThreadsLock) != 0){
         exit(EXIT_FAILURE);
     }
     while (numThreads != 0){
-        pthread_cond_wait(&exitCond, &numThreadsLock);
-    }
+        pthread_cond_wait(&exitCond, &numThreadsLock);  //espera que todas as tarefas escravas terminem
+    }                                                   //apos receber o signal
     if(pthread_mutex_unlock(&numThreadsLock) != 0){
         exit(EXIT_FAILURE);
     }
@@ -533,6 +529,7 @@ int main(int argc, char* argv[]) {
     if(unlink(socketName) == -1){
         exit(EXIT_FAILURE);
     }
+    
     if(close(sockfd) == -1){
         fprintf(stderr, "Error: Failed to close sockfd. \n");
         exit(EXIT_FAILURE);

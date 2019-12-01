@@ -105,7 +105,7 @@ int delete(tecnicofs* fs, char *name, uid_t userid, openfileLink *tabFichAbertos
         return TECNICOFS_ERROR_FILE_NOT_FOUND;
     }
 
-    for(i = 0; i < TABELA_FA_SIZE; i++){
+    for(i = 0; i < TABELA_FA_SIZE; i++){    //verifica se o cliente que chamou a funcao tem o ficheiro aberto
         if((tabFichAbertos[i] != NULL) && (!strcmp(tabFichAbertos[i]->filename, name))){
             if(pthread_rwlock_unlock(&fs->hashtable[ix]->rwBstLock))
                 exit(EXIT_FAILURE);
@@ -119,7 +119,7 @@ int delete(tecnicofs* fs, char *name, uid_t userid, openfileLink *tabFichAbertos
         return TECNICOFS_ERROR_OTHER;
     }
 
-    if(owner != userid){
+    if(owner != userid){    //apenas o dono pode apagar um ficheiro
         if(pthread_rwlock_unlock(&fs->hashtable[ix]->rwBstLock))
             exit(EXIT_FAILURE);
         return TECNICOFS_ERROR_PERMISSION_DENIED;
@@ -196,7 +196,7 @@ int renameFile(tecnicofs *fs, char *name, char* nameAux, uid_t user, openfileLin
 
     struct timespec tim, tim2;
     tim.tv_sec = 0;
-    while(1){
+    while(1){   //tenta obter os locks e so depois verifica as condicoes para a excucao do rename
         int numAttempts = 0;
         if (pthread_rwlock_trywrlock(&(fs->hashtable[ix1]->rwBstLock)) == 0){
             if ((ix1 != ix2) && (pthread_rwlock_trywrlock(&(fs->hashtable[ix2]->rwBstLock)) == 0)){
@@ -231,7 +231,7 @@ int renameFile(tecnicofs *fs, char *name, char* nameAux, uid_t user, openfileLin
         return TECNICOFS_ERROR_OTHER;
     }
 
-    if (owner != user){
+    if (owner != user){ //apenas o dono pode mudar o nome de um ficheiro
         renameUnlock(fs, flagTrylockOne, flagTrylockTwo, ix1, ix2);
         return TECNICOFS_ERROR_PERMISSION_DENIED;
     }
@@ -253,7 +253,8 @@ int renameFile(tecnicofs *fs, char *name, char* nameAux, uid_t user, openfileLin
         }
     }
 
-    if ((flagTrylockOne != 0) || (flagTrylockTwo != 0)){
+    //excucao propriamente dita do rename
+    if ((flagTrylockOne != 0) || (flagTrylockTwo != 0)){    
         fs->hashtable[ix1]->bstRoot = remove_item(fs->hashtable[ix1]->bstRoot, name);
         fs->hashtable[ix2]->bstRoot = insert(fs->hashtable[ix2]->bstRoot, nameAux, iNumberAux);
         renameUnlock(fs, flagTrylockOne, flagTrylockTwo, ix1, ix2);
@@ -286,6 +287,7 @@ int openFile(tecnicofs *fs, openfileLink *tabFichAbertos, char *filename, permis
         if(inode_get(searchResult, &owner, &ownerPermissions, &othersPermissions, NULL, 0) == -1)
             return TECNICOFS_ERROR_OTHER;
 
+        //verifica permissoes
         if(user != owner){
             if (othersPermissions == NONE){
                 return TECNICOFS_ERROR_PERMISSION_DENIED;
@@ -322,7 +324,6 @@ int closeFile(tecnicofs *fs, openfileLink *tabFichAbertos, int fd){
         free(tabFichAbertos[fd]->filename);
         free(tabFichAbertos[fd]);
         tabFichAbertos[fd] = NULL;
-
         return SUCCESS;
     }
     else{

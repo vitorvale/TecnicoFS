@@ -25,10 +25,11 @@ int createSocket(){
     return 0;
 }
 
+/* Send a command and await response (except read command) */
 int commandResponse(char* command){
 	char command_resp[4];
 
-	if(write(sockfd, command, strlen(command)+1) == -1)
+	if(write(sockfd, command, strlen(command) + 1) == -1)
 		return TECNICOFS_ERROR_CONNECTION_ERROR;
 	if(read(sockfd, command_resp, 4) == -1)
 		return TECNICOFS_ERROR_CONNECTION_ERROR;
@@ -72,6 +73,7 @@ int tfsMount(char* address){
     	return TECNICOFS_ERROR_CONNECTION_ERROR;
     }
     
+    //check if mount was a success
     if(atoi(mount_resp) != SUCCESS){
     	return atoi(mount_resp);
     }
@@ -86,7 +88,8 @@ int tfsUnmount(){
 	if(sockfd == -1){
 		return TECNICOFS_ERROR_NO_OPEN_SESSION;
 	}
-
+	
+	//send the unmount command
 	if(write(sockfd, "s\0", 2) == -1)
 		return TECNICOFS_ERROR_CONNECTION_ERROR;
 	if(read(sockfd, unmount_resp, 8) == -1)
@@ -254,7 +257,7 @@ int tfsWrite(int fd, char *buffer, int len){
 
 	sprintf(sfd, "%d", fd);
 	
-	for(i = 0; i < len; i++){
+	for(i = 0; i < len; i++){	//limita o conteudo a escrever segundo o parametro len
 		dataInBuffer[i] = buffer[i];
 		if(buffer[i] == '\0')
 			break;

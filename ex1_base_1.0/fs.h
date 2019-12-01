@@ -9,6 +9,7 @@
 
 #define TABELA_FA_SIZE 5
 
+/* estrutura que representa um ficheiro aberto */
 typedef struct openfile{
 	char *filename;
 	permission mode;
@@ -16,7 +17,7 @@ typedef struct openfile{
 
 typedef openfile_t* openfileLink;
 
-/* estrutura auxiliar */
+/* estrutura auxiliar para a hashtable */
 typedef struct bst{
     node* bstRoot;
     pthread_rwlock_t rwBstLock;
