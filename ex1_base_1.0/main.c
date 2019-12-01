@@ -26,7 +26,7 @@
 #define MAX_INPUT_SIZE 100
 #define BUFF_SIZE 1024
 #define FD_NULL -1
-#define UID_NULL -1
+#define PID_NULL -1
 #define CLOSE_SESSION_CONSTANT -1
 #define BUFF_RESP_SIZE 3
 
@@ -67,21 +67,14 @@ int numberOfDigits(int n){
 }
 
 //liberta tabela de ficheiros abertos e termina a sessao caso exista
-int terminateSession(uid_t uid, int cli, openfileLink *tabFichAbertos){
+int terminateSession(u_int32_t pid, int cli, openfileLink *tabFichAbertos){
     int sessionExistsFlag = 0, i; 
-
-    for(int i = 0; i < TABELA_FA_SIZE; i++){
-        if(tabFichAbertos[i] != NULL){
-            free(tabFichAbertos[i]->filename);
-            free(tabFichAbertos[i]);
-        }
-    }
 
     if (pthread_rwlock_rdlock(&tabSessoesLock) != 0){
         exit(EXIT_FAILURE);
     }    
     for(i = 0; i < tabSessoesSize; i++){
-        if(uid == tabSessoes[i]){
+        if(pid == tabSessoes[i]){
             sessionExistsFlag++;
             break;
         }
@@ -94,10 +87,17 @@ int terminateSession(uid_t uid, int cli, openfileLink *tabFichAbertos){
     	return TECNICOFS_ERROR_NO_OPEN_SESSION;
     }
     else{
+        for(int k = 0; k < TABELA_FA_SIZE; k++){
+            if(tabFichAbertos[k] != NULL){
+                free(tabFichAbertos[k]->filename);
+                free(tabFichAbertos[k]);
+            }
+        }
+
         if (pthread_rwlock_wrlock(&tabSessoesLock) != 0){
             exit(EXIT_FAILURE);
         }
-        tabSessoes[i] = UID_NULL;
+        tabSessoes[i] = PID_NULL;
         numSessoes--;
         if (pthread_rwlock_unlock(&tabSessoesLock) != 0){
             exit(EXIT_FAILURE);
@@ -139,7 +139,7 @@ void applyCommand(struct ucred ucred, char* command, openfileLink *tabFichAberto
     char arg1[MAX_INPUT_SIZE];
     char arg2[MAX_INPUT_SIZE];
     char buffer[BUFF_RESP_SIZE];
-    memset(buffer, '\0', BUFF_RESP_SIZE);
+    memset(buffer, '\0', sizeof(char) * BUFF_RESP_SIZE);
     /* verificacao do token */
     int numTokens = sscanf(command, "%c", &token);
 
@@ -181,7 +181,7 @@ void applyCommand(struct ucred ucred, char* command, openfileLink *tabFichAberto
 
             if (rdRes >= 0){    //separa o caso de sucesso do caso de erro
                 char respBuffer[numberOfDigits(rdRes) + atoi(arg2) + 1];
-                memset(respBuffer, '\0', numberOfDigits(rdRes) + atoi(arg2) + 1);
+                memset(respBuffer, '\0', sizeof(char) * (numberOfDigits(rdRes) + atoi(arg2) + 1));
                 sprintf(respBuffer, "%d", rdRes);
                 respBuffer[numberOfDigits(rdRes)] = ' ';
                 strcpy(&respBuffer[numberOfDigits(rdRes) + 1], contentBuffer);
@@ -287,8 +287,6 @@ void *trataCliente(void *arg){
         exit(EXIT_FAILURE);
     }
     
-    memset(buff, 0, sizeof(char));
-
     clifd = *cli;
     if (sem_post(&clientfd) == -1){ //avisa que ja guardou o fd do socket do cliente
         exit(EXIT_FAILURE);
@@ -301,7 +299,7 @@ void *trataCliente(void *arg){
     }
 
     while(1){
-        memset(buff, 0, sizeof(char));
+        memset(buff, 0, sizeof(char) * BUFF_SIZE);
         if(read(clifd, buff, BUFF_SIZE) == -1){
             terminateClientThread(ucred, clifd, tabFichAbertos);
         }
@@ -316,11 +314,9 @@ void criaThread(int cli){
         exit(EXIT_FAILURE);
     }
 
-    if(numThreads == tidTableSize){
-        tid = (pthread_t *) realloc(tid, sizeof(pthread_t)*(++tidTableSize));
-        if(tid == NULL){
-            exit(EXIT_FAILURE);
-        }
+    tid = (pthread_t *) realloc(tid, sizeof(pthread_t)*(++tidTableSize));
+    if(tid == NULL){
+        exit(EXIT_FAILURE);
     }
     
     if(pthread_create(&tid[numThreads], 0, trataCliente, (void *) &cli) != 0){
@@ -399,7 +395,7 @@ int main(int argc, char* argv[]) {
         exit(EXIT_FAILURE);
     }
     tabSessoesSize++;
-    memset(tabSessoes, 0, tabSessoesSize);
+    memset(tabSessoes, PID_NULL, sizeof(u_int32_t)*tabSessoesSize);
     if (pthread_rwlock_unlock(&tabSessoesLock) != 0){
         exit(EXIT_FAILURE);
     }
@@ -443,9 +439,9 @@ int main(int argc, char* argv[]) {
 
     while(signalActivated == 0) {
         int sessionAlreadyExistsFlag = 0;
-		int cli = -1;
+		int cli = -1, k = 0;
         char buffer[BUFF_RESP_SIZE];
-        memset(buffer, '\0', BUFF_RESP_SIZE);
+        memset(buffer, '\0', sizeof(char) * BUFF_RESP_SIZE);
         
         cli = accept(sockfd, NULL, NULL);
         if (cli == -1){
@@ -481,9 +477,17 @@ int main(int argc, char* argv[]) {
             if (pthread_rwlock_wrlock(&tabSessoesLock) != 0){
                 exit(EXIT_FAILURE);
             }
-            if(numSessoes == tabSessoesSize)
+            if(numSessoes == tabSessoesSize){
                 tabSessoes = (u_int32_t *) realloc(tabSessoes, sizeof(u_int32_t)*(++tabSessoesSize));
-            tabSessoes[numSessoes++] = ucred.pid;
+                tabSessoes[tabSessoesSize - 1] = PID_NULL;
+            }        
+            for(k = 0; k < tabSessoesSize; k++){
+                if(tabSessoes[k] == PID_NULL){
+                    break;
+                }
+            }
+            tabSessoes[k] = ucred.pid;
+            numSessoes++;
             sprintf(buffer, "%d", SUCCESS);
             if(write(cli, buffer, BUFF_RESP_SIZE) == -1){
                 if(close(cli) == -1){
@@ -552,7 +556,7 @@ int main(int argc, char* argv[]) {
     }
 
     free(tid);
-    free_tecnicofs(fs);
+    free_tecnicofs(fs);  
     free(tabSessoes);
 
     exit(EXIT_SUCCESS);
